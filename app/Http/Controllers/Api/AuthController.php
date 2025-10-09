@@ -17,6 +17,7 @@ class AuthController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
+            'phone' => 'required|string|max:20',
         ]);
 
         if ($validator->fails()) {
@@ -31,6 +32,8 @@ class AuthController extends Controller
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
+            'phone' => $request->phone,
+            'role' => 'user', // Default to regular user
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -46,24 +49,12 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
-        // Debug: Log the incoming request data
-        \Log::info('Login attempt', [
-            'request_data' => $request->all(),
-            'headers' => $request->headers->all(),
-            'content_type' => $request->header('Content-Type')
-        ]);
-
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'password' => 'required',
         ]);
 
         if ($validator->fails()) {
-            \Log::error('Login validation failed', [
-                'errors' => $validator->errors(),
-                'request_data' => $request->all()
-            ]);
-            
             return response()->json([
                 'success' => false,
                 'message' => 'Validation errors',
@@ -114,8 +105,79 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'phone' => $user->phone,
                 'role' => $user->role,
             ],
         ]);
+    }
+
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|required|string|max:255',
+            'email' => 'sometimes|required|string|email|max:255|unique:users,email,' . $user->id,
+            'phone' => 'sometimes|required|string|max:20',
+            'current_password' => 'required_with:password|string',
+            'password' => 'nullable|string|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // If user wants to change password, verify current password
+        if ($request->has('password') && $request->password) {
+            if (!$request->has('current_password') || !Hash::check($request->current_password, $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Current password is incorrect'
+                ], 422);
+            }
+        }
+
+        try {
+            $updateData = [];
+
+            if ($request->has('name')) {
+                $updateData['name'] = $request->name;
+            }
+
+            if ($request->has('email')) {
+                $updateData['email'] = $request->email;
+            }
+
+            if ($request->has('phone')) {
+                $updateData['phone'] = $request->phone;
+            }
+
+            if ($request->has('password') && $request->password) {
+                $updateData['password'] = Hash::make($request->password);
+            }
+
+            $user->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile updated successfully',
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update profile: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

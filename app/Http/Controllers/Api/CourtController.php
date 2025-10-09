@@ -216,4 +216,39 @@ class CourtController extends Controller
             'data' => $savedImages
         ]);
     }
+
+    /**
+     * Get recent bookings for a specific court
+     */
+    public function getRecentBookings($id)
+    {
+        $court = Court::findOrFail($id);
+        
+        // Get recent cart transactions for this court
+        $recentBookings = \App\Models\CartTransaction::with(['user', 'cartItems' => function($query) use ($id) {
+                // Only load cart items for this specific court
+                $query->where('court_id', $id)
+                      ->where('status', '!=', 'cancelled')
+                      ->orderBy('booking_date', 'desc')
+                      ->orderBy('start_time', 'asc');
+            }])
+            ->whereHas('cartItems', function($query) use ($id) {
+                $query->where('court_id', $id)
+                      ->where('status', '!=', 'cancelled');
+            })
+            ->where('status', '!=', 'cancelled')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get();
+
+        // Filter out transactions with no cart items for this court
+        $recentBookings = $recentBookings->filter(function($transaction) {
+            return $transaction->cartItems->count() > 0;
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $recentBookings
+        ]);
+    }
 }

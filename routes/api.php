@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\RecurringScheduleController;
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\CartTransactionController;
+use App\Http\Controllers\Api\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,6 +32,7 @@ Route::get('/sports/{id}', [SportController::class, 'show']);
 Route::get('/courts', [CourtController::class, 'index']);
 Route::get('/courts/{id}', [CourtController::class, 'show']);
 Route::get('/courts/{courtId}/available-slots', [BookingController::class, 'availableSlots']);
+Route::get('/courts/{id}/recent-bookings', [CourtController::class, 'getRecentBookings']);
 Route::post('/save-court-image/{id}', [CourtController::class, 'saveImage']);
 
 // Protected routes
@@ -38,6 +40,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth routes
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'user']);
+    Route::put('/profile', [AuthController::class, 'updateProfile']);
     
     // Sport management (admin only)
     Route::middleware('admin')->group(function () {
@@ -109,5 +112,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/cart-transactions/pending', [CartTransactionController::class, 'pending']);
         Route::post('/admin/cart-transactions/{id}/approve', [CartTransactionController::class, 'approve']);
         Route::post('/admin/cart-transactions/{id}/reject', [CartTransactionController::class, 'reject']);
+        
+        // Admin user management routes
+        Route::get('/admin/users', [UserController::class, 'index']);
+        Route::get('/admin/users/stats', [UserController::class, 'stats']);
+        Route::post('/admin/users', [UserController::class, 'store']);
+        Route::get('/admin/users/{id}', [UserController::class, 'show']);
+        Route::put('/admin/users/{id}', [UserController::class, 'update']);
+        Route::delete('/admin/users/{id}', [UserController::class, 'destroy']);
     });
 });
