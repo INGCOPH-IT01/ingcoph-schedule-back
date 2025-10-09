@@ -105,25 +105,17 @@ class CartController extends Controller
             $userId = $request->user()->id;
             $totalPrice = 0;
 
-            // Check for existing pending cart transaction or create new one
-            $cartTransaction = CartTransaction::where('user_id', $userId)
-                ->where('status', 'pending')
-                ->where('payment_status', 'unpaid')
-                ->first();
-
-            if (!$cartTransaction) {
-                // Create new cart transaction
-                $cartTransaction = CartTransaction::create([
-                    'user_id' => $userId,
-                    'total_price' => 0,
-                    'status' => 'pending',
-                    'approval_status' => 'pending',
-                    'payment_method' => 'pending',
-                    'payment_status' => 'unpaid'
-                ]);
-                
-                Log::info('Created new cart transaction: ' . $cartTransaction->id);
-            }
+            // Always create a new cart transaction for each booking
+            $cartTransaction = CartTransaction::create([
+                'user_id' => $userId,
+                'total_price' => 0,
+                'status' => 'pending',
+                'approval_status' => 'pending',
+                'payment_method' => 'pending',
+                'payment_status' => 'unpaid'
+            ]);
+            
+            Log::info('Created new cart transaction: ' . $cartTransaction->id);
 
             foreach ($request->items as $item) {
                 // Check if item already exists in cart
