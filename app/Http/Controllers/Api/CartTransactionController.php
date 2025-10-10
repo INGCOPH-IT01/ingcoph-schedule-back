@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartTransaction;
+use App\Mail\BookingApproved;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class CartTransactionController extends Controller
 {
@@ -94,8 +96,33 @@ class CartTransactionController extends Controller
             'user_id' => $transaction->user_id
         ]);
 
+        // Send email notification to user
+        try {
+            // Reload transaction with full relationships for email
+            $transactionWithDetails = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled')
+                          ->orderBy('booking_date')
+                          ->orderBy('start_time');
+                },
+                'cartItems.court.sport',
+                'cartItems.court'
+            ])->find($transaction->id);
+
+            if ($transactionWithDetails && $transactionWithDetails->user && $transactionWithDetails->user->email) {
+                Mail::to($transactionWithDetails->user->email)
+                    ->send(new BookingApproved($transactionWithDetails));
+                
+                Log::info('Approval email sent to: ' . $transactionWithDetails->user->email);
+            }
+        } catch (\Exception $e) {
+            // Log error but don't fail the approval
+            Log::error('Failed to send approval email: ' . $e->getMessage());
+        }
+
         return response()->json([
-            'message' => 'Transaction approved successfully',
+            'message' => 'Transaction approved successfully and notification email sent',
             'transaction' => $transaction->load(['approver', 'bookings'])
         ]);
     }
