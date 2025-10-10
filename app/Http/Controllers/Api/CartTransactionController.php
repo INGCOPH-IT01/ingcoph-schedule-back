@@ -218,8 +218,8 @@ class CartTransactionController extends Controller
             if ($transaction->status !== 'checked_in') {
                 $transaction->update(['status' => 'checked_in']);
                 
-                // Also update associated bookings
-                $transaction->bookings()->update(['status' => 'checked_in']);
+                // Update associated bookings to 'completed' (bookings table doesn't have 'checked_in' status)
+                $transaction->bookings()->update(['status' => 'completed']);
             }
 
             Log::info('QR code verified successfully', [
