@@ -128,5 +128,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Admin company settings routes
         Route::put('/admin/company-settings', [CompanySettingController::class, 'update']);
+        Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
+        Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
     });
 });
