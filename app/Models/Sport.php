@@ -11,6 +11,7 @@ class Sport extends Model
         'name',
         'description',
         'image',
+        'icon',
         'is_active'
     ];
 

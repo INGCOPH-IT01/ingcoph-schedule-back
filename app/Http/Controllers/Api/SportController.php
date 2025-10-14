@@ -15,7 +15,7 @@ class SportController extends Controller
     public function index()
     {
         $sports = Sport::where('is_active', true)->get();
-        
+
         // If no sports exist, create some default sports
         if ($sports->isEmpty()) {
             $defaultSports = [
@@ -40,14 +40,14 @@ class SportController extends Controller
                     'is_active' => true,
                 ]
             ];
-            
+
             foreach ($defaultSports as $sportData) {
                 Sport::create($sportData);
             }
-            
+
             $sports = Sport::where('is_active', true)->get();
         }
-        
+
         return response()->json([
             'success' => true,
             'data' => $sports
@@ -63,6 +63,7 @@ class SportController extends Controller
             'name' => 'required|string|max:255|unique:sports,name',
             'description' => 'nullable|string',
             'image' => 'nullable|string',
+            'icon' => 'nullable|string|max:255',
             'is_active' => 'boolean'
         ]);
 
@@ -78,6 +79,7 @@ class SportController extends Controller
             'name' => $request->name,
             'description' => $request->description,
             'image' => $request->image,
+            'icon' => $request->icon,
             'is_active' => $request->is_active ?? true
         ]);
 
@@ -126,6 +128,7 @@ class SportController extends Controller
             'name' => 'required|string|max:255|unique:sports,name,' . $id,
             'description' => 'nullable|string',
             'image' => 'nullable|string',
+            'icon' => 'nullable|string|max:255',
             'is_active' => 'boolean'
         ]);
 
@@ -141,6 +144,7 @@ class SportController extends Controller
             'name' => $request->name,
             'description' => $request->description,
             'image' => $request->image,
+            'icon' => $request->icon,
             'is_active' => $request->is_active ?? $sport->is_active
         ]);
 
