@@ -82,6 +82,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/bookings/validate-qr', [BookingController::class, 'validateQrCode'])->middleware('staff');
     Route::get('/bookings/{id}/qr-code', [BookingController::class, 'getQrCode']);
 
+    // Attendance status route
+    Route::patch('/bookings/{id}/attendance-status', [BookingController::class, 'updateAttendanceStatus']);
+
     // General booking routes
     Route::get('/bookings/{id}', [BookingController::class, 'show']);
     Route::put('/bookings/{id}', [BookingController::class, 'update']);
@@ -117,6 +120,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/cart-transactions/pending', [CartTransactionController::class, 'pending']);
         Route::post('/admin/cart-transactions/{id}/approve', [CartTransactionController::class, 'approve']);
         Route::post('/admin/cart-transactions/{id}/reject', [CartTransactionController::class, 'reject']);
+        Route::patch('/admin/cart-transactions/{id}/attendance-status', [CartTransactionController::class, 'updateAttendanceStatus']);
 
         // Admin user management routes
         Route::get('/admin/users', [UserController::class, 'index']);

@@ -47,7 +47,7 @@ class CartTransactionController extends Controller
             ->findOrFail($id);
 
         // Check if user owns this transaction or is admin/staff
-        if ($transaction->user_id !== $request->user()->id && 
+        if ($transaction->user_id !== $request->user()->id &&
             !in_array($request->user()->role, ['admin', 'staff'])) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -113,7 +113,7 @@ class CartTransactionController extends Controller
             if ($transactionWithDetails && $transactionWithDetails->user && $transactionWithDetails->user->email) {
                 Mail::to($transactionWithDetails->user->email)
                     ->send(new BookingApproved($transactionWithDetails));
-                
+
                 Log::info('Approval email sent to: ' . $transactionWithDetails->user->email);
             }
         } catch (\Exception $e) {
@@ -188,7 +188,7 @@ class CartTransactionController extends Controller
     {
         try {
             $qrData = json_decode($request->qr_code, true);
-            
+
             if (!$qrData || !isset($qrData['transaction_id'])) {
                 return response()->json([
                     'valid' => false,
@@ -216,15 +216,22 @@ class CartTransactionController extends Controller
 
             // Update transaction status to checked-in if needed
             if ($transaction->status !== 'checked_in') {
-                $transaction->update(['status' => 'checked_in']);
-                
-                // Update associated bookings to 'completed' (bookings table doesn't have 'checked_in' status)
-                $transaction->bookings()->update(['status' => 'completed']);
+                $transaction->update([
+                    'status' => 'checked_in',
+                    'attendance_status' => 'showed_up'
+                ]);
+
+                // Update associated bookings to 'completed' and set attendance status
+                $transaction->bookings()->update([
+                    'status' => 'completed',
+                    'attendance_status' => 'showed_up'
+                ]);
             }
 
             Log::info('QR code verified successfully', [
                 'transaction_id' => $transaction->id,
-                'verified_by' => $request->user()->id
+                'verified_by' => $request->user()->id,
+                'attendance_status' => 'showed_up'
             ]);
 
             return response()->json([
@@ -295,5 +302,41 @@ class CartTransactionController extends Controller
                 'message' => 'Failed to delete transaction: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Update attendance status for a cart transaction
+     */
+    public function updateAttendanceStatus(Request $request, $id)
+    {
+        $request->validate([
+            'attendance_status' => 'required|string|in:not_set,showed_up,no_show'
+        ]);
+
+        $transaction = CartTransaction::findOrFail($id);
+
+        // Only admin can update attendance status
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to update attendance status'
+            ], 403);
+        }
+
+        $transaction->update([
+            'attendance_status' => $request->attendance_status
+        ]);
+
+        Log::info('Attendance status updated', [
+            'transaction_id' => $transaction->id,
+            'attendance_status' => $request->attendance_status,
+            'updated_by' => $request->user()->id
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Attendance status updated successfully',
+            'transaction' => $transaction->load(['user', 'cartItems.court.sport'])
+        ]);
     }
 }

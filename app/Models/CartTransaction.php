@@ -21,7 +21,8 @@ class CartTransaction extends Model
         'gcash_reference',
         'proof_of_payment',
         'paid_at',
-        'qr_code'
+        'qr_code',
+        'attendance_status'
     ];
 
     protected $casts = [

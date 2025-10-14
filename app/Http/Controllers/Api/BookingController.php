@@ -79,14 +79,14 @@ class BookingController extends Controller
 
         // Get the selected court
         $court = \App\Models\Court::find($request->court_id);
-        
+
         if (!$court) {
             return response()->json([
                 'success' => false,
                 'message' => 'Selected court not found'
             ], 404);
         }
-        
+
         if (!$court->is_active) {
             return response()->json([
                 'success' => false,
@@ -97,7 +97,7 @@ class BookingController extends Controller
         // Parse start and end times
         $startTime = Carbon::parse($request->start_time);
         $endTime = Carbon::parse($request->end_time);
-        
+
         // Check for time conflicts with existing bookings (skip for recurring schedules)
         if ($request->status !== 'recurring_schedule') {
             $conflictingBooking = Booking::where('court_id', $court->id)
@@ -131,7 +131,7 @@ class BookingController extends Controller
         }
         }
 
-        
+
         // For recurring schedules, set total_price to 0 (will be calculated per session)
         if ($request->status === 'recurring_schedule') {
             $totalPrice = 0;
@@ -233,7 +233,7 @@ class BookingController extends Controller
                             'errors' => $validator->errors()
                         ], 422);
                     }
-            
+
         // Check for time conflicts with other bookings
         $conflictingBooking = Booking::where('court_id', $request->court_id)
             ->where('id', '!=', $id)
@@ -259,15 +259,15 @@ class BookingController extends Controller
 
         if($request->status === "cancelled"){
             $onyFields = [
-                'status', 
+                'status',
                 'notes',
             ];
         }else{
             $onyFields = [
-                'start_time', 
-                'end_time', 
-                'total_price', 
-                'status', 
+                'start_time',
+                'end_time',
+                'total_price',
+                'status',
                 'notes',
                 'frequency_type',
                 'frequency_days',
@@ -333,14 +333,14 @@ class BookingController extends Controller
         try {
             // Store the uploaded file
             $file = $request->file('proof_of_payment');
-            
+
             if (!$file) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No file uploaded'
                 ], 400);
             }
-            
+
             $filename = 'proof_' . $booking->id . '_' . time() . '.' . $file->getClientOriginalExtension();
             $path = $file->storeAs('proofs', $filename, 'public');
 
@@ -368,7 +368,7 @@ class BookingController extends Controller
         } catch (\Exception $e) {
             Log::error('Upload proof of payment error: ' . $e->getMessage());
             Log::error('Stack trace: ' . $e->getTraceAsString());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload proof of payment: ' . $e->getMessage()
@@ -440,7 +440,7 @@ class BookingController extends Controller
         // Get all pending and completed cart items for this court on the specified date
         // Exclude pending cart items that are older than 1 hour (unpaid)
         $oneHourAgo = Carbon::now()->subHour();
-        
+
         $cartItems = \App\Models\CartItem::with('cartTransaction')
             ->where('court_id', $courtId)
             ->where('booking_date', $date->format('Y-m-d'))
@@ -466,18 +466,18 @@ class BookingController extends Controller
 
         while ($currentTime->lt($endTime)) {
             $slotEnd = $currentTime->copy()->addHours($duration);
-            
+
             // Check if the slot end time exceeds the court's operating hours
             if ($slotEnd->gt($endTime)) {
                 break;
             }
-            
+
             // Check if this time slot conflicts with any existing booking
             $conflictingBooking = $bookings->first(function ($booking) use ($currentTime, $slotEnd) {
                 // Parse booking times without timezone conversion since they're stored as local time strings
                 $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $booking->start_time);
                 $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $booking->end_time);
-                
+
                 // Check for any overlap between the slot and the booking
                 return $currentTime->lt($bookingEnd) && $slotEnd->gt($bookingStart);
             });
@@ -487,7 +487,7 @@ class BookingController extends Controller
                 // Create full datetime strings for cart items
                 $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $cartItem->start_time);
                 $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $cartItem->end_time);
-                
+
                 // Check for any overlap between the slot and the cart item
                 return $currentTime->lt($cartEnd) && $slotEnd->gt($cartStart);
             });
@@ -513,7 +513,7 @@ class BookingController extends Controller
                     $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
                     $bookingDuration = $bookingEnd->diffInHours($bookingStart);
                     $bookingPrice = $court->price_per_hour * $bookingDuration;
-                    
+
                     $availableSlots[] = [
                         'start' => $bookingStart->format('H:i'),
                         'end' => $bookingEnd->format('H:i'),
@@ -527,17 +527,17 @@ class BookingController extends Controller
                         'booking_id' => $conflictingBooking->id,
                         'type' => 'booking'
                     ];
-                    
+
                     $addedBookingIds[] = $conflictingBooking->id;
                 }
-                
+
                 // Handle conflicting cart item
                 if ($conflictingCartItem && !in_array($conflictingCartItem->id, $addedCartItemIds)) {
                     $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time);
                     $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time);
                     $cartDuration = $cartEnd->diffInHours($cartStart);
                     $cartPrice = $court->price_per_hour * $cartDuration;
-                    
+
                     $availableSlots[] = [
                         'start' => $cartStart->format('H:i'),
                         'end' => $cartEnd->format('H:i'),
@@ -552,7 +552,7 @@ class BookingController extends Controller
                         'type' => $conflictingCartItem->status === 'completed' ? 'paid' : 'in_cart',
                         'status' => $conflictingCartItem->status
                     ];
-                    
+
                     $addedCartItemIds[] = $conflictingCartItem->id;
                 }
             }
@@ -749,6 +749,12 @@ class BookingController extends Controller
 
         // Check in the booking
         if ($booking->checkIn()) {
+            Log::info('Booking checked in via QR code', [
+                'booking_id' => $booking->id,
+                'user_id' => $booking->user_id,
+                'attendance_status' => 'showed_up'
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Successfully checked in',
@@ -815,6 +821,51 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'data' => $bookings
+        ]);
+    }
+
+    /**
+     * Update booking attendance status
+     */
+    public function updateAttendanceStatus(Request $request, string $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'attendance_status' => 'required|string|in:not_set,showed_up,no_show'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $booking = Booking::find($id);
+
+        if (!$booking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Booking not found'
+            ], 404);
+        }
+
+        // Only admin can update attendance status
+        if (!$request->user()->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to update attendance status'
+            ], 403);
+        }
+
+        $booking->update([
+            'attendance_status' => $request->attendance_status
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Attendance status updated successfully',
+            'data' => $booking->load(['user', 'court.sport'])
         ]);
     }
 }

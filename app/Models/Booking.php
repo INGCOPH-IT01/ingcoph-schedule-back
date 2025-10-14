@@ -30,7 +30,8 @@ class Booking extends Model
         'paid_at',
         'proof_of_payment',
         'qr_code',
-        'checked_in_at'
+        'checked_in_at',
+        'attendance_status'
     ];
 
     protected $casts = [
@@ -100,7 +101,7 @@ class Booking extends Model
      */
     public function canCheckIn(): bool
     {
-        return $this->status === self::STATUS_APPROVED && 
+        return $this->status === self::STATUS_APPROVED &&
                !$this->checked_in_at &&
                now()->between($this->start_time, $this->end_time);
     }
@@ -113,6 +114,7 @@ class Booking extends Model
         if ($this->canCheckIn()) {
             $this->status = self::STATUS_CHECKED_IN;
             $this->checked_in_at = now();
+            $this->attendance_status = 'showed_up';
             return $this->save();
         }
         return false;
