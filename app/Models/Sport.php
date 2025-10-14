@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Sport extends Model
 {
@@ -19,8 +20,15 @@ class Sport extends Model
         'is_active' => 'boolean',
     ];
 
+    // Legacy one-to-many relationship (kept for backward compatibility)
     public function courts(): HasMany
     {
         return $this->hasMany(Court::class);
+    }
+
+    // New many-to-many relationship for multiple courts
+    public function courtsMany(): BelongsToMany
+    {
+        return $this->belongsToMany(Court::class, 'court_sport');
     }
 }

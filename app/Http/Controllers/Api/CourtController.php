@@ -16,10 +16,13 @@ class CourtController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Court::with('sport', 'images')->where('is_active', true);
+        $query = Court::with(['sport', 'sports', 'images'])->where('is_active', true);
 
         if ($request->has('sport_id')) {
-            $query->where('sport_id', $request->sport_id);
+            // Support filtering by sport using the pivot table
+            $query->whereHas('sports', function($q) use ($request) {
+                $q->where('sports.id', $request->sport_id);
+            });
         }
 
         $courts = $query->get();
@@ -41,6 +44,9 @@ class CourtController extends Controller
             'price_per_hour' => 'required|numeric|min:0',
             'location' => 'nullable|string',
             'amenities' => 'nullable|array',
+            'sport_ids' => 'nullable|array',
+            'sport_ids.*' => 'exists:sports,id',
+            'sport_id' => 'nullable|exists:sports,id', // Keep for backward compatibility
         ]);
 
         if ($validator->fails()) {
@@ -51,27 +57,36 @@ class CourtController extends Controller
             ], 422);
         }
 
-        // Automatically assign badminton sport
-        $badmintonSport = \App\Models\Sport::where('name', 'Badminton')->where('is_active', true)->first();
-        
-        if (!$badmintonSport) {
-            // Create badminton sport if it doesn't exist
-            $badmintonSport = \App\Models\Sport::create([
-                'name' => 'Badminton',
-                'description' => 'Racquet sport played with a shuttlecock on a rectangular court',
-                'is_active' => true,
-            ]);
+        $courtData = $request->except('sport_ids');
+
+        // If no sport_id provided and no sport_ids, auto-assign badminton as default
+        if (!$request->has('sport_id') && !$request->has('sport_ids')) {
+            $badmintonSport = \App\Models\Sport::where('name', 'Badminton')->where('is_active', true)->first();
+
+            if (!$badmintonSport) {
+                $badmintonSport = \App\Models\Sport::create([
+                    'name' => 'Badminton',
+                    'description' => 'Racquet sport played with a shuttlecock on a rectangular court',
+                    'is_active' => true,
+                ]);
+            }
+            $courtData['sport_id'] = $badmintonSport->id;
         }
 
-        $courtData = $request->all();
-      
-
         $court = Court::create($courtData);
+
+        // Sync multiple sports if provided
+        if ($request->has('sport_ids') && is_array($request->sport_ids)) {
+            $court->sports()->sync($request->sport_ids);
+        } elseif ($request->has('sport_id')) {
+            // If only single sport_id provided, also add it to the many-to-many relationship
+            $court->sports()->sync([$request->sport_id]);
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Court created successfully',
-            'data' => $court->load('sport')
+            'data' => $court->load(['sport', 'sports'])
         ], 201);
     }
 
@@ -80,7 +95,7 @@ class CourtController extends Controller
      */
     public function show(string $id)
     {
-        $court = Court::with('sport', 'bookings','images')->find($id);
+        $court = Court::with(['sport', 'sports', 'bookings', 'images'])->find($id);
 
         if (!$court) {
             return response()->json([
@@ -100,7 +115,7 @@ class CourtController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        
+
         $court = Court::find($id);
 
         if (!$court) {
@@ -117,6 +132,9 @@ class CourtController extends Controller
             'location' => 'nullable|string',
             'amenities' => 'nullable|array',
             'is_active' => 'boolean',
+            'sport_ids' => 'nullable|array',
+            'sport_ids.*' => 'exists:sports,id',
+            'sport_id' => 'nullable|exists:sports,id', // Keep for backward compatibility
         ]);
 
         if ($validator->fails()) {
@@ -127,9 +145,7 @@ class CourtController extends Controller
             ], 422);
         }
 
-        // Ensure sport remains badminton (prevent sport changes)
-        $updateData = $request->all();
- 
+        $updateData = $request->except('sport_ids');
 
         if($request->has('trashImages')) {
             foreach ($request->trashImages as $trashImage) {
@@ -139,15 +155,21 @@ class CourtController extends Controller
                 Storage::disk('public')->delete($courtImage->image_url);
             }
         }
-        
+
         $court->update($updateData);
-       
-    
+
+        // Sync multiple sports if provided
+        if ($request->has('sport_ids') && is_array($request->sport_ids)) {
+            $court->sports()->sync($request->sport_ids);
+        } elseif ($request->has('sport_id')) {
+            // If only single sport_id provided, also update the many-to-many relationship
+            $court->sports()->sync([$request->sport_id]);
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Court updated successfully',
-            'data' => $court->load('sport')
+            'data' => $court->load(['sport', 'sports'])
         ]);
     }
 
@@ -184,18 +206,18 @@ class CourtController extends Controller
             ], 404);
         }
 
-   
 
-   
+
+
         $savedImages = [];
         if(count($request->file('images')) > 0) {
             foreach ($request->file('images') as $file) {
                 // Generate unique filename
                 $filename = uniqid() . '.' . $file->getClientOriginalExtension();
-    
+
                 // Store file in storage/app/public/courts
                 $path = $file->storeAs('courts', $filename, 'public');
-    
+
                     // // Save in DB (optional)
                    $courtImage = new CourtImage();
                    $courtImage->court_id = $court->id;
@@ -205,11 +227,11 @@ class CourtController extends Controller
                    $courtImage->image_type = $file->getClientMimeType();
                    $courtImage->image_size = $file->getSize();
                    $courtImage->save();
-    
+
                 $savedImages[] = $courtImage;
             }
         }
-       
+
         return response()->json([
             'success' => true,
             'message' => 'Images saved successfully',
@@ -223,7 +245,7 @@ class CourtController extends Controller
     public function getRecentBookings($id)
     {
         $court = Court::findOrFail($id);
-        
+
         // Get recent cart transactions for this court
         $recentBookings = \App\Models\CartTransaction::with(['user', 'cartItems' => function($query) use ($id) {
                 // Only load cart items for this specific court
