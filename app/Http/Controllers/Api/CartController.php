@@ -7,6 +7,7 @@ use App\Models\CartItem;
 use App\Models\CartTransaction;
 use App\Models\Court;
 use App\Models\Booking;
+use App\Events\BookingCreated;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -24,7 +25,7 @@ class CartController extends Controller
 
         $cartTransaction = CartTransaction::with(['cartItems' => function($query) {
                 $query->where('status', 'pending');
-            }, 'cartItems.court.sport', 'cartItems.court.images', 'user'])
+            }, 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookingForUser', 'user'])
             ->where('user_id', $request->user()->id)
             ->where('status', 'pending')
             ->where('payment_status', 'unpaid')
@@ -82,6 +83,8 @@ class CartController extends Controller
      */
     public function store(Request $request)
     {
+        Log::info('CartController::store - Received request data:', $request->all());
+        
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.court_id' => 'required|exists:courts,id',
@@ -152,6 +155,12 @@ class CartController extends Controller
                     ], 409);
                 }
 
+                Log::info('Creating cart item with admin fields:', [
+                    'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
+                    'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
+                    'admin_notes' => $item['admin_notes'] ?? null
+                ]);
+
                 $cartItem = CartItem::create([
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
@@ -159,8 +168,17 @@ class CartController extends Controller
                     'booking_date' => $item['booking_date'],
                     'start_time' => $item['start_time'],
                     'end_time' => $item['end_time'],
-                    'price' => $item['price']
+                    'price' => $item['price'],
+                    'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
+                    'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
+                    'admin_notes' => $item['admin_notes'] ?? null
                 ]);
+                
+                Log::info('Cart item created with ID: ' . $cartItem->id . ', admin fields: ' . json_encode([
+                    'booking_for_user_id' => $cartItem->booking_for_user_id,
+                    'booking_for_user_name' => $cartItem->booking_for_user_name,
+                    'admin_notes' => $cartItem->admin_notes
+                ]));
 
                 $totalPrice += floatval($item['price']);
                 $addedItems[] = $cartItem->load(['court.sport', 'court.images']);
@@ -448,6 +466,9 @@ class CartController extends Controller
 
                 Log::info('Creating booking for group: ' . json_encode($group));
 
+                // Get the first cart item from this group to extract admin booking fields
+                $firstCartItem = CartItem::whereIn('id', $group['items'])->first();
+
                 $booking = Booking::create([
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
@@ -460,12 +481,18 @@ class CartController extends Controller
                     'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
                     'gcash_reference' => $request->gcash_reference,
                     'proof_of_payment' => $request->proof_of_payment,
-                    'paid_at' => $request->payment_method === 'gcash' ? now() : null
+                    'paid_at' => $request->payment_method === 'gcash' ? now() : null,
+                    'booking_for_user_id' => $firstCartItem->booking_for_user_id,
+                    'booking_for_user_name' => $firstCartItem->booking_for_user_name,
+                    'admin_notes' => $firstCartItem->admin_notes,
                 ]);
 
                 Log::info('Booking created with ID: ' . $booking->id);
 
                 $createdBookings[] = $booking->load(['user', 'court.sport', 'court.images', 'cartTransaction']);
+                
+                // Broadcast booking created event in real-time
+                broadcast(new BookingCreated($booking))->toOthers();
             }
 
             // Mark items as completed instead of deleting them

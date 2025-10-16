@@ -19,6 +19,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Force English locale for dates and logs
+        setlocale(LC_ALL, 'en_US.UTF-8', 'en_US', 'English_United States.1252');
+        \Carbon\Carbon::setLocale('en');
     }
 }

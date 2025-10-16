@@ -64,6 +64,7 @@ class SportController extends Controller
             'description' => 'nullable|string',
             'image' => 'nullable|string',
             'icon' => 'nullable|string|max:255',
+            'price_per_hour' => 'required|numeric|min:0',
             'is_active' => 'boolean'
         ]);
 
@@ -80,6 +81,7 @@ class SportController extends Controller
             'description' => $request->description,
             'image' => $request->image,
             'icon' => $request->icon,
+            'price_per_hour' => $request->price_per_hour,
             'is_active' => $request->is_active ?? true
         ]);
 
@@ -129,6 +131,7 @@ class SportController extends Controller
             'description' => 'nullable|string',
             'image' => 'nullable|string',
             'icon' => 'nullable|string|max:255',
+            'price_per_hour' => 'required|numeric|min:0',
             'is_active' => 'boolean'
         ]);
 
@@ -145,6 +148,7 @@ class SportController extends Controller
             'description' => $request->description,
             'image' => $request->image,
             'icon' => $request->icon,
+            'price_per_hour' => $request->price_per_hour,
             'is_active' => $request->is_active ?? $sport->is_active
         ]);
 

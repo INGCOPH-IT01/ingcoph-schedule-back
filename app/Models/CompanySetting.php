@@ -17,6 +17,11 @@ class CompanySetting extends Model
     protected $fillable = [
         'key',
         'value',
+        'bg_primary_color',
+        'bg_secondary_color',
+        'bg_accent_color',
+        'bg_overlay_color',
+        'bg_pattern_color',
     ];
 
     /**

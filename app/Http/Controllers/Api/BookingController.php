@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Court;
 use App\Mail\BookingApprovalMail;
+use App\Events\BookingCreated;
+use App\Events\BookingStatusChanged;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
@@ -19,12 +21,17 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Booking::with(['user', 'court.sport', 'court.images', 'cartTransaction.cartItems.court']);
+        $query = Booking::with(['user', 'bookingForUser', 'court.sport', 'court.images', 'cartTransaction.cartItems.court']);
 
-        // For regular users, only show their own bookings
+        // For regular users, show bookings where they are either:
+        // 1. The user who created it (user_id)
+        // 2. The user the booking was made for (booking_for_user_id)
         // For admins, show all bookings unless filtered
         if (!$request->user()->isAdmin()) {
-            $query->where('user_id', $request->user()->id);
+            $query->where(function($q) use ($request) {
+                $q->where('user_id', $request->user()->id)
+                  ->orWhere('booking_for_user_id', $request->user()->id);
+            });
         } else {
             // Admin can filter by user_id if provided
             if ($request->has('user_id')) {
@@ -148,6 +155,9 @@ class BookingController extends Controller
             'total_price' => $totalPrice,
             'status' => $request->status ?? 'pending',
             'notes' => $request->notes,
+            'booking_for_user_id' => $request->booking_for_user_id,
+            'booking_for_user_name' => $request->booking_for_user_name,
+            'admin_notes' => $request->admin_notes,
             'recurring_schedule' => $request->recurring_schedule,
             'recurring_schedule_data' => $request->recurring_schedule_data,
             'frequency_type' => $request->frequency_type ?? 'once',
@@ -162,6 +172,9 @@ class BookingController extends Controller
             'paid_at' => $request->payment_status === 'paid' ? now() : null,
         ]);
 
+        // Broadcast booking created event
+        broadcast(new BookingCreated($booking))->toOthers();
+
         return response()->json([
             'success' => true,
             'message' => 'Booking created successfully',
@@ -174,7 +187,7 @@ class BookingController extends Controller
      */
     public function show(string $id)
     {
-        $booking = Booking::with(['user', 'court.sport', 'court.images', 'cartTransaction.cartItems.court'])->find($id);
+        $booking = Booking::with(['user', 'bookingForUser', 'court.sport', 'court.images', 'cartTransaction.cartItems.court'])->find($id);
 
         if (!$booking) {
             return response()->json([
@@ -278,7 +291,15 @@ class BookingController extends Controller
             ];
         }
 
+        // Store old status before updating
+        $oldStatus = $booking->status;
+        
         $booking->update($request->only($onyFields));
+
+        // Broadcast status change event if status changed
+        if ($request->has('status') && $oldStatus !== $booking->status) {
+            broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
+        }
 
         return response()->json([
             'success' => true,
@@ -603,6 +624,7 @@ class BookingController extends Controller
             ], 400);
         }
 
+        $oldStatus = $booking->status;
         $booking->update(['status' => 'approved']);
 
         // Generate QR code for approved booking
@@ -626,6 +648,9 @@ class BookingController extends Controller
             ]);
             // Don't fail the approval if email fails
         }
+
+        // Broadcast status change event
+        broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
 
         return response()->json([
             'success' => true,
@@ -667,10 +692,15 @@ class BookingController extends Controller
             ], 400);
         }
 
+        $oldStatus = $booking->status;
+        
         $booking->update([
             'status' => 'rejected',
             'notes' => $request->reason ? $booking->notes . "\n\nRejection reason: " . $request->reason : $booking->notes
         ]);
+
+        // Broadcast status change event
+        broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
 
         return response()->json([
             'success' => true,
@@ -748,13 +778,11 @@ class BookingController extends Controller
         }
 
         // Check in the booking
+        $oldStatus = $booking->status;
         if ($booking->checkIn()) {
-            Log::info('Booking checked in via QR code', [
-                'booking_id' => $booking->id,
-                'user_id' => $booking->user_id,
-                'attendance_status' => 'showed_up'
-            ]);
-
+            // Broadcast status change event
+            broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
+            
             return response()->json([
                 'success' => true,
                 'message' => 'Successfully checked in',

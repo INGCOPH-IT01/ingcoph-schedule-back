@@ -13,10 +13,12 @@ class Sport extends Model
         'description',
         'image',
         'icon',
+        'price_per_hour',
         'is_active'
     ];
 
     protected $casts = [
+        'price_per_hour' => 'decimal:2',
         'is_active' => 'boolean',
     ];
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CartTransaction;
 use App\Mail\BookingApproved;
+use App\Events\BookingStatusChanged;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -90,6 +91,11 @@ class CartTransactionController extends Controller
             'qr_code' => $qrData
         ]);
 
+        // Broadcast real-time status change for each booking
+        foreach ($transaction->bookings as $booking) {
+            broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
+        }
+
         Log::info('Cart transaction approved', [
             'transaction_id' => $transaction->id,
             'approved_by' => $request->user()->id,
@@ -153,6 +159,11 @@ class CartTransactionController extends Controller
         $transaction->bookings()->update([
             'status' => 'rejected'
         ]);
+
+        // Broadcast real-time status change for each booking
+        foreach ($transaction->bookings as $booking) {
+            broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'rejected'))->toOthers();
+        }
 
         Log::info('Cart transaction rejected', [
             'transaction_id' => $transaction->id,
@@ -226,6 +237,11 @@ class CartTransactionController extends Controller
                     'status' => 'completed',
                     'attendance_status' => 'showed_up'
                 ]);
+                
+                // Broadcast real-time status change for each booking
+                foreach ($transaction->bookings as $booking) {
+                    broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'approved', 'completed'))->toOthers();
+                }
             }
 
             Log::info('QR code verified successfully', [

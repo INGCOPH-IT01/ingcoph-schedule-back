@@ -9,12 +9,15 @@ class CartItem extends Model
 {
     protected $fillable = [
         'user_id',
+        'booking_for_user_id',
+        'booking_for_user_name',
         'cart_transaction_id',
         'court_id',
         'booking_date',
         'start_time',
         'end_time',
         'price',
+        'admin_notes',
         'status',
         'session_id'
     ];
@@ -30,6 +33,14 @@ class CartItem extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the user this cart item is booked for (if admin booking for someone else)
+     */
+    public function bookingForUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'booking_for_user_id');
     }
 
     /**

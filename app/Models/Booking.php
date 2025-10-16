@@ -10,6 +10,8 @@ class Booking extends Model
 {
     protected $fillable = [
         'user_id',
+        'booking_for_user_id',
+        'booking_for_user_name',
         'cart_transaction_id',
         'court_id',
         'start_time',
@@ -17,6 +19,7 @@ class Booking extends Model
         'total_price',
         'status',
         'notes',
+        'admin_notes',
         'recurring_schedule',
         'recurring_schedule_data',
         'frequency_type',
@@ -71,6 +74,14 @@ class Booking extends Model
         return $this->belongsTo(User::class);
     }
 
+    /**
+     * Get the user this booking was made for (if admin booking for someone else)
+     */
+    public function bookingForUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'booking_for_user_id');
+    }
+
     public function court(): BelongsTo
     {
         return $this->belongsTo(Court::class);
@@ -119,5 +130,34 @@ class Booking extends Model
         }
         return false;
     }
+
+    /**
+     * Get the display name for this booking
+     * Returns booking_for_user_name if set, otherwise the user's name
+     */
+    public function getDisplayNameAttribute(): string
+    {
+        if ($this->booking_for_user_name) {
+            return $this->booking_for_user_name;
+        }
+        return $this->user ? $this->user->name : 'Unknown';
+    }
+
+    /**
+     * Get the effective user for this booking
+     * Returns bookingForUser if set, otherwise returns the regular user
+     */
+    public function getEffectiveUserAttribute()
+    {
+        if ($this->booking_for_user_id && $this->bookingForUser) {
+            return $this->bookingForUser;
+        }
+        return $this->user;
+    }
+
+    /**
+     * Append custom attributes to model's array/JSON form
+     */
+    protected $appends = ['display_name', 'effective_user'];
 
 }

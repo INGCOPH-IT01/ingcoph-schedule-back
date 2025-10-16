@@ -13,14 +13,12 @@ class Court extends Model
         'name',
         'sport_id',
         'description',
-        'price_per_hour',
         'location',
         'amenities',
         'is_active'
     ];
 
     protected $casts = [
-        'price_per_hour' => 'decimal:2',
         'amenities' => 'array',
         'is_active' => 'boolean',
     ];

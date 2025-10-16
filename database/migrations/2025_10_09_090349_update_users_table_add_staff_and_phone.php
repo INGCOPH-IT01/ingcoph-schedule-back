@@ -15,10 +15,12 @@ return new class extends Migration
         // First, modify the enum to include 'staff'
         DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('user', 'staff', 'admin') DEFAULT 'user'");
         
-        // Add phone column
-        Schema::table('users', function (Blueprint $table) {
-            $table->string('phone', 20)->nullable()->after('email');
-        });
+        // Add phone column if it doesn't exist
+        if (!Schema::hasColumn('users', 'phone')) {
+            Schema::table('users', function (Blueprint $table) {
+                $table->string('phone', 20)->nullable()->after('email');
+            });
+        }
     }
 
     /**

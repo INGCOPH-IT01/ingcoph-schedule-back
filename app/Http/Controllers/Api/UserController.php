@@ -17,7 +17,12 @@ class UserController extends Controller
     public function index(Request $request)
     {
         try {
+            Log::info('Fetching users - Request by user ID: ' . ($request->user() ? $request->user()->id : 'none'));
+            Log::info('User role: ' . ($request->user() ? $request->user()->role : 'none'));
+            
             $users = User::orderBy('created_at', 'desc')->get();
+            
+            Log::info('Successfully fetched ' . $users->count() . ' users');
             
             return response()->json([
                 'success' => true,
@@ -25,9 +30,10 @@ class UserController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error fetching users: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to fetch users'
+                'message' => 'Failed to fetch users: ' . $e->getMessage()
             ], 500);
         }
     }

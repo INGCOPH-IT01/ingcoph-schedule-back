@@ -11,9 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('bookings', function (Blueprint $table) {
-            $table->dropColumn('recurring_schedule_id');
-        });
+        // Only drop the column if it exists
+        if (Schema::hasColumn('bookings', 'recurring_schedule_id')) {
+            Schema::table('bookings', function (Blueprint $table) {
+                $table->dropColumn('recurring_schedule_id');
+            });
+        }
     }
 
     /**

@@ -12,13 +12,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Insert company_logo key with null value by default
-        DB::table('company_settings')->insert([
-            'key' => 'company_logo',
-            'value' => null,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        // Only insert if the table exists
+        if (Schema::hasTable('company_settings')) {
+            // Insert company_logo key with null value by default
+            DB::table('company_settings')->insert([
+                'key' => 'company_logo',
+                'value' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     /**
