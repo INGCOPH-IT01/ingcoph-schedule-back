@@ -17,7 +17,6 @@ class CourtSeeder extends Seeder
             'name' => 'Badminton Court',
             'sport_id' => 1,
             'description' => 'Professional badminton court with wooden floor and modern facilities',
-            'price_per_hour' => 25.00,
             'location' => 'Main Sports Hall',
             'amenities' => ['Air Conditioning', 'Equipment Rental', 'Parking', 'Professional Lighting', 'Sound System'],
             'is_active' => true,

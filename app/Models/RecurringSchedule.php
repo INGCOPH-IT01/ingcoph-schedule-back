@@ -80,30 +80,30 @@ class RecurringSchedule extends Model
         switch ($this->recurrence_type) {
             case 'daily':
                 return true;
-            
+
             case 'weekly':
                 $dayOfWeek = $date->dayOfWeek;
                 return in_array($dayOfWeek, $this->recurrence_days);
-            
+
             case 'monthly':
                 // Check if it's the same day of the month
                 return $date->day === Carbon::parse($this->start_date)->day;
-            
+
             case 'yearly':
                 // Check if it's the same month and day
                 $startDate = Carbon::parse($this->start_date);
                 return $date->month === $startDate->month && $date->day === $startDate->day;
-            
+
             case 'yearly_multiple_times':
                 // Check if the day has specific times defined (for yearly with day-specific times)
                 $dayOfWeek = $date->dayOfWeek;
                 return $this->hasDaySpecificTimes($dayOfWeek);
-            
+
             case 'weekly_multiple_times':
                 // Check if the day has specific times defined
                 $dayOfWeek = $date->dayOfWeek;
                 return $this->hasDaySpecificTimes($dayOfWeek);
-            
+
             default:
                 return false;
         }
@@ -150,7 +150,7 @@ class RecurringSchedule extends Model
                 if (in_array($this->recurrence_type, ['weekly_multiple_times', 'yearly_multiple_times']) && $this->day_specific_times) {
                     $dayOfWeek = $current->dayOfWeek;
                     $dayTimes = $this->getDaySpecificTimes($dayOfWeek);
-                    
+
                     if ($dayTimes) {
                         $bookingDateTime = $current->copy()->setTimeFromTimeString($dayTimes['start_time']);
                         $endDateTime = $current->copy()->setTimeFromTimeString($dayTimes['end_time']);
@@ -195,11 +195,11 @@ class RecurringSchedule extends Model
         $start = Carbon::parse($startTime);
         $end = Carbon::parse($endTime);
         $duration = $end->diffInHours($start);
-        
-        // Get court price per hour
+
+        // Get sport price per hour from the court's sport
         $court = $this->court;
-        $pricePerHour = $court ? $court->price_per_hour : 0;
-        
+        $pricePerHour = ($court && $court->sport) ? $court->sport->price_per_hour : 0;
+
         return $duration * $pricePerHour;
     }
 }

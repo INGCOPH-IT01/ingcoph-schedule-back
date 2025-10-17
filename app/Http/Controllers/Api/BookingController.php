@@ -144,7 +144,7 @@ class BookingController extends Controller
             $totalPrice = 0;
         } else {
             $hours = $endTime->diffInHours($startTime);
-            $totalPrice = $court->price_per_hour * $hours;
+            $totalPrice = $court->sport->price_per_hour * $hours;
         }
 
         $booking = Booking::create([
@@ -293,7 +293,7 @@ class BookingController extends Controller
 
         // Store old status before updating
         $oldStatus = $booking->status;
-        
+
         $booking->update($request->only($onyFields));
 
         // Broadcast status change event if status changed
@@ -515,7 +515,7 @@ class BookingController extends Controller
 
             if (!$conflictingBooking && !$conflictingCartItem) {
                 // Regular available slot
-                $price = $court->price_per_hour * $duration;
+                $price = $court->sport->price_per_hour * $duration;
                 $availableSlots[] = [
                     'start' => $currentTime->format('H:i'),
                     'end' => $slotEnd->format('H:i'),
@@ -533,7 +533,7 @@ class BookingController extends Controller
                     $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
                     $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
                     $bookingDuration = $bookingEnd->diffInHours($bookingStart);
-                    $bookingPrice = $court->price_per_hour * $bookingDuration;
+                    $bookingPrice = $court->sport->price_per_hour * $bookingDuration;
 
                     $availableSlots[] = [
                         'start' => $bookingStart->format('H:i'),
@@ -557,7 +557,7 @@ class BookingController extends Controller
                     $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time);
                     $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time);
                     $cartDuration = $cartEnd->diffInHours($cartStart);
-                    $cartPrice = $court->price_per_hour * $cartDuration;
+                    $cartPrice = $court->sport->price_per_hour * $cartDuration;
 
                     $availableSlots[] = [
                         'start' => $cartStart->format('H:i'),
@@ -693,7 +693,7 @@ class BookingController extends Controller
         }
 
         $oldStatus = $booking->status;
-        
+
         $booking->update([
             'status' => 'rejected',
             'notes' => $request->reason ? $booking->notes . "\n\nRejection reason: " . $request->reason : $booking->notes
@@ -782,7 +782,7 @@ class BookingController extends Controller
         if ($booking->checkIn()) {
             // Broadcast status change event
             broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Successfully checked in',
