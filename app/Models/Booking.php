@@ -156,8 +156,31 @@ class Booking extends Model
     }
 
     /**
+     * Get the calculated price if total_price is 0 or null
+     * Calculate based on court's price_per_hour and booking duration
+     */
+    public function getCalculatedPriceAttribute()
+    {
+        // If total_price is already set and not zero, return it
+        if ($this->total_price && $this->total_price > 0) {
+            return $this->total_price;
+        }
+
+        // Calculate price based on court's price_per_hour and duration
+        if ($this->court && $this->start_time && $this->end_time) {
+            $startTime = \Carbon\Carbon::parse($this->start_time);
+            $endTime = \Carbon\Carbon::parse($this->end_time);
+            $durationHours = $endTime->diffInHours($startTime);
+            
+            return $this->court->price_per_hour * $durationHours;
+        }
+
+        return 0;
+    }
+
+    /**
      * Append custom attributes to model's array/JSON form
      */
-    protected $appends = ['display_name', 'effective_user'];
+    protected $appends = ['display_name', 'effective_user', 'calculated_price'];
 
 }

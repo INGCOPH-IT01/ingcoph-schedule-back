@@ -451,8 +451,9 @@ class BookingController extends Controller
         $startOfDay = $date->copy()->startOfDay();
         $endOfDay = $date->copy()->endOfDay();
 
-        // Get all non-cancelled bookings for this court on the specified date
-        $bookings = Booking::where('court_id', $courtId)
+        // Get all non-cancelled bookings for this court on the specified date with user information
+        $bookings = Booking::with('user')
+            ->where('court_id', $courtId)
             ->whereIn('status', ['pending', 'approved', 'completed']) // Only consider active bookings
             ->whereBetween('start_time', [$startOfDay, $endOfDay])
             ->orderBy('start_time')
@@ -460,9 +461,10 @@ class BookingController extends Controller
 
         // Get all pending and completed cart items for this court on the specified date
         // Exclude pending cart items that are older than 1 hour (unpaid)
+        // Also exclude cart items from rejected transactions
         $oneHourAgo = Carbon::now()->subHour();
 
-        $cartItems = \App\Models\CartItem::with('cartTransaction')
+        $cartItems = \App\Models\CartItem::with(['cartTransaction.user'])
             ->where('court_id', $courtId)
             ->where('booking_date', $date->format('Y-m-d'))
             ->where(function($query) use ($oneHourAgo) {
@@ -475,6 +477,10 @@ class BookingController extends Controller
                                 $transQuery->where('created_at', '>=', $oneHourAgo);
                             });
                     });
+            })
+            // Exclude cart items from rejected transactions
+            ->whereHas('cartTransaction', function($transQuery) {
+                $transQuery->where('approval_status', '!=', 'rejected');
             })
             ->orderBy('start_time')
             ->get();
@@ -546,7 +552,9 @@ class BookingController extends Controller
                         'available' => false,
                         'is_booked' => true,
                         'booking_id' => $conflictingBooking->id,
-                        'type' => 'booking'
+                        'type' => 'booking',
+                        'booked_by' => $conflictingBooking->user ? $conflictingBooking->user->name : 'Unknown User',
+                        'booking_status' => $conflictingBooking->status
                     ];
 
                     $addedBookingIds[] = $conflictingBooking->id;
@@ -571,7 +579,11 @@ class BookingController extends Controller
                         'is_booked' => true,
                         'cart_item_id' => $conflictingCartItem->id,
                         'type' => $conflictingCartItem->status === 'completed' ? 'paid' : 'in_cart',
-                        'status' => $conflictingCartItem->status
+                        'status' => $conflictingCartItem->status,
+                        'booked_by' => $conflictingCartItem->cartTransaction && $conflictingCartItem->cartTransaction->user 
+                            ? $conflictingCartItem->cartTransaction->user->name 
+                            : ($conflictingCartItem->booking_for_user_name ?: 'Unknown User'),
+                        'booking_status' => $conflictingCartItem->status
                     ];
 
                     $addedCartItemIds[] = $conflictingCartItem->id;
@@ -709,27 +721,7 @@ class BookingController extends Controller
         ]);
     }
 
-    /**
-     * Get booking statistics for admin dashboard
-     */
-    public function getStats()
-    {
-        $stats = [
-            'total_bookings' => Booking::count(),
-            'pending_bookings' => Booking::where('status', 'pending')->count(),
-            'approved_bookings' => Booking::where('status', 'approved')->count(),
-            'rejected_bookings' => Booking::where('status', 'rejected')->count(),
-            'cancelled_bookings' => Booking::where('status', 'cancelled')->count(),
-            'completed_bookings' => Booking::where('status', 'completed')->count(),
-            'total_revenue' => Booking::where('status', 'approved')->sum('total_price'),
-            'pending_revenue' => Booking::where('status', 'pending')->sum('total_price')
-        ];
-
-        return response()->json([
-            'success' => true,
-            'data' => $stats
-        ]);
-    }
+    
 
     /**
      * Validate QR code and check in booking
@@ -894,6 +886,37 @@ class BookingController extends Controller
             'success' => true,
             'message' => 'Attendance status updated successfully',
             'data' => $booking->load(['user', 'court.sport'])
+        ]);
+    }
+
+    /**
+     * Get admin statistics
+     */
+    public function getStats(Request $request)
+    {
+        // Only admin can access stats
+        if (!$request->user()->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to access statistics'
+            ], 403);
+        }
+
+        $stats = [
+            'total_bookings' => Booking::count(),
+            'pending_bookings' => Booking::where('status', 'pending')->count(),
+            'approved_bookings' => Booking::where('status', 'approved')->count(),
+            'rejected_bookings' => Booking::where('status', 'rejected')->count(),
+            'completed_bookings' => Booking::where('status', 'completed')->count(),
+            'total_revenue' => Booking::sum('total_price'),
+            'total_users' => \App\Models\User::count(),
+            'total_courts' => \App\Models\Court::where('is_active', true)->count(),
+            'total_sports' => \App\Models\Sport::where('is_active', true)->count(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $stats
         ]);
     }
 }
