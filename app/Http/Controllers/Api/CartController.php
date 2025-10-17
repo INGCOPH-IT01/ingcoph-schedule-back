@@ -11,6 +11,7 @@ use App\Events\BookingCreated;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class CartController extends Controller
@@ -54,23 +55,23 @@ class CartController extends Controller
     {
         try {
             $oneHourAgo = \Carbon\Carbon::now()->subHour();
-            
+
             // Find all pending cart transactions for this user that are older than 1 hour
             $expiredTransactions = CartTransaction::where('user_id', $userId)
                 ->where('status', 'pending')
                 ->where('payment_status', 'unpaid')
                 ->where('created_at', '<', $oneHourAgo)
                 ->get();
-            
+
             foreach ($expiredTransactions as $transaction) {
                 // Mark all pending cart items as expired
                 CartItem::where('cart_transaction_id', $transaction->id)
                     ->where('status', 'pending')
                     ->update(['status' => 'expired']);
-                
+
                 // Mark the transaction as expired
                 $transaction->update(['status' => 'expired']);
-                
+
                 Log::info("Auto-expired cart transaction #{$transaction->id} for user #{$userId}");
             }
         } catch (\Exception $e) {
@@ -84,7 +85,7 @@ class CartController extends Controller
     public function store(Request $request)
     {
         Log::info('CartController::store - Received request data:', $request->all());
-        
+
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.court_id' => 'required|exists:courts,id',
@@ -117,7 +118,7 @@ class CartController extends Controller
                 'payment_method' => 'pending',
                 'payment_status' => 'unpaid'
             ]);
-            
+
             Log::info('Created new cart transaction: ' . $cartTransaction->id);
 
             foreach ($request->items as $item) {
@@ -173,7 +174,7 @@ class CartController extends Controller
                     'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
                     'admin_notes' => $item['admin_notes'] ?? null
                 ]);
-                
+
                 Log::info('Cart item created with ID: ' . $cartItem->id . ', admin fields: ' . json_encode([
                     'booking_for_user_id' => $cartItem->booking_for_user_id,
                     'booking_for_user_name' => $cartItem->booking_for_user_name,
@@ -279,7 +280,7 @@ class CartController extends Controller
             if ($cartTransaction) {
                 // Mark all pending cart items as cancelled
                 $cartTransaction->cartItems()->where('status', 'pending')->update(['status' => 'cancelled']);
-                
+
                 // Mark the transaction as cancelled
                 $cartTransaction->update(['status' => 'cancelled']);
             }
@@ -343,7 +344,7 @@ class CartController extends Controller
             DB::beginTransaction();
 
             $userId = $request->user()->id;
-            
+
             // Find the pending cart transaction
             $cartTransaction = CartTransaction::where('user_id', $userId)
                 ->where('status', 'pending')
@@ -360,14 +361,14 @@ class CartController extends Controller
             // Get cart items - either selected ones or all items in transaction
             $cartItemsQuery = CartItem::with('court')
                 ->where('cart_transaction_id', $cartTransaction->id);
-            
+
             if ($request->has('selected_items') && !empty($request->selected_items)) {
                 $cartItemsQuery->whereIn('id', $request->selected_items);
                 Log::info('Checking out selected items: ' . json_encode($request->selected_items));
             } else {
                 Log::info('Checking out all cart items in transaction');
             }
-            
+
             $cartItems = $cartItemsQuery
                 ->orderBy('court_id')
                 ->orderBy('booking_date')
@@ -389,13 +390,13 @@ class CartController extends Controller
 
             foreach ($cartItems as $item) {
                 // Handle Carbon date object
-                $bookingDate = $item->booking_date instanceof \Carbon\Carbon 
-                    ? $item->booking_date->format('Y-m-d') 
+                $bookingDate = $item->booking_date instanceof \Carbon\Carbon
+                    ? $item->booking_date->format('Y-m-d')
                     : $item->booking_date;
-                    
+
                 $groupKey = $item->court_id . '_' . $bookingDate;
 
-                if (!$currentGroup || $currentGroup['key'] !== $groupKey || 
+                if (!$currentGroup || $currentGroup['key'] !== $groupKey ||
                     $currentGroup['end_time'] !== $item->start_time) {
                     // Start new group
                     if ($currentGroup) {
@@ -426,6 +427,41 @@ class CartController extends Controller
             // Calculate total price for the selected items
             $totalPrice = array_sum(array_column($groupedBookings, 'price'));
 
+            // Process proof of payment - decode base64 and save as file
+            $proofOfPaymentPath = null;
+            if ($request->proof_of_payment) {
+                try {
+                    $base64String = $request->proof_of_payment;
+
+                    // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+                    if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
+                        $base64String = substr($base64String, strpos($base64String, ',') + 1);
+                        $imageType = strtolower($type[1]); // jpg, png, gif, etc.
+                    } else {
+                        $imageType = 'jpg';
+                    }
+
+                    // Decode base64 to binary image data
+                    $imageData = base64_decode($base64String);
+
+                    if ($imageData === false) {
+                        Log::error('Failed to decode base64 proof of payment');
+                    } else {
+                        // Create filename with transaction ID and timestamp
+                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '.' . $imageType;
+
+                        // Save to storage/app/public/proofs/
+                        Storage::disk('public')->put('proofs/' . $filename, $imageData);
+
+                        $proofOfPaymentPath = 'proofs/' . $filename;
+                        Log::info('Proof of payment saved as file: ' . $proofOfPaymentPath);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to save proof of payment as file: ' . $e->getMessage());
+                    // Continue without proof file - validation will handle missing proof
+                }
+            }
+
             // Update the existing cart transaction with payment info
             $cartTransaction->update([
                 'total_price' => $totalPrice,
@@ -433,7 +469,7 @@ class CartController extends Controller
                 'payment_method' => $request->payment_method,
                 'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
                 'gcash_reference' => $request->gcash_reference,
-                'proof_of_payment' => $request->proof_of_payment,
+                'proof_of_payment' => $proofOfPaymentPath, // Now stores file path, not base64
                 'paid_at' => $request->payment_method === 'gcash' ? now() : null
             ]);
 
@@ -447,7 +483,7 @@ class CartController extends Controller
                     ->where(function ($query) use ($group) {
                         $startDateTime = $group['booking_date'] . ' ' . $group['start_time'];
                         $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
-                        
+
                         $query->whereBetween('start_time', [$startDateTime, $endDateTime])
                             ->orWhereBetween('end_time', [$startDateTime, $endDateTime])
                             ->orWhere(function ($q) use ($startDateTime, $endDateTime) {
@@ -480,7 +516,7 @@ class CartController extends Controller
                     'payment_method' => $request->payment_method,
                     'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
                     'gcash_reference' => $request->gcash_reference,
-                    'proof_of_payment' => $request->proof_of_payment,
+                    'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
                     'paid_at' => $request->payment_method === 'gcash' ? now() : null,
                     'booking_for_user_id' => $firstCartItem->booking_for_user_id,
                     'booking_for_user_name' => $firstCartItem->booking_for_user_name,
@@ -490,7 +526,7 @@ class CartController extends Controller
                 Log::info('Booking created with ID: ' . $booking->id);
 
                 $createdBookings[] = $booking->load(['user', 'court.sport', 'court.images', 'cartTransaction']);
-                
+
                 // Broadcast booking created event in real-time
                 broadcast(new BookingCreated($booking))->toOthers();
             }
@@ -500,18 +536,18 @@ class CartController extends Controller
                 // Mark only selected items as completed
                 CartItem::whereIn('id', $request->selected_items)->update(['status' => 'completed']);
                 Log::info('Marked selected cart items as completed');
-                
+
                 // Check if there are remaining pending items in the original transaction
                 $remainingItems = CartItem::where('cart_transaction_id', $cartTransaction->id)
                     ->where('status', 'pending')
                     ->count();
-                    
+
                 if ($remainingItems > 0) {
                     // Create a new pending transaction for remaining items
                     $remainingTotal = CartItem::where('cart_transaction_id', $cartTransaction->id)
                         ->where('status', 'pending')
                         ->sum('price');
-                        
+
                     $newTransaction = CartTransaction::create([
                         'user_id' => $userId,
                         'total_price' => $remainingTotal,
@@ -520,12 +556,12 @@ class CartController extends Controller
                         'payment_method' => 'pending',
                         'payment_status' => 'unpaid'
                     ]);
-                    
+
                     // Move remaining pending items to new transaction
                     CartItem::where('cart_transaction_id', $cartTransaction->id)
                         ->where('status', 'pending')
                         ->update(['cart_transaction_id' => $newTransaction->id]);
-                    
+
                     Log::info('Created new pending transaction for remaining items: ' . $newTransaction->id);
                 }
             } else {

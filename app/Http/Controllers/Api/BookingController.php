@@ -398,6 +398,56 @@ class BookingController extends Controller
     }
 
     /**
+     * Serve proof of payment image
+     */
+    public function getProofOfPayment(Request $request, $id)
+    {
+        $booking = Booking::find($id);
+
+        if (!$booking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Booking not found'
+            ], 404);
+        }
+
+        // Check if user is authorized to view this proof
+        // Only the booking owner, admin, or staff can view
+        $user = $request->user();
+        if ($user->id !== $booking->user_id &&
+            $user->role !== 'admin' &&
+            $user->role !== 'staff') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to view this proof of payment'
+            ], 403);
+        }
+
+        if (!$booking->proof_of_payment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No proof of payment found for this booking'
+            ], 404);
+        }
+
+        // Get the file path from storage
+        $path = storage_path('app/public/' . $booking->proof_of_payment);
+
+        if (!file_exists($path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proof of payment file not found'
+            ], 404);
+        }
+
+        // Return the file with appropriate headers
+        return response()->file($path, [
+            'Content-Type' => mime_content_type($path),
+            'Cache-Control' => 'public, max-age=3600'
+        ]);
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)

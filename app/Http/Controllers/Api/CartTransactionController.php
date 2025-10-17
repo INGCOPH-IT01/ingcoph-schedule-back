@@ -237,7 +237,7 @@ class CartTransactionController extends Controller
                     'status' => 'completed',
                     'attendance_status' => 'showed_up'
                 ]);
-                
+
                 // Broadcast real-time status change for each booking
                 foreach ($transaction->bookings as $booking) {
                     broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'approved', 'completed'))->toOthers();
@@ -353,6 +353,56 @@ class CartTransactionController extends Controller
             'success' => true,
             'message' => 'Attendance status updated successfully',
             'transaction' => $transaction->load(['user', 'cartItems.court.sport'])
+        ]);
+    }
+
+    /**
+     * Serve proof of payment image for cart transaction
+     */
+    public function getProofOfPayment(Request $request, $id)
+    {
+        $transaction = CartTransaction::find($id);
+
+        if (!$transaction) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Transaction not found'
+            ], 404);
+        }
+
+        // Check if user is authorized to view this proof
+        // Only the transaction owner, admin, or staff can view
+        $user = $request->user();
+        if ($user->id !== $transaction->user_id &&
+            $user->role !== 'admin' &&
+            $user->role !== 'staff') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to view this proof of payment'
+            ], 403);
+        }
+
+        if (!$transaction->proof_of_payment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No proof of payment found for this transaction'
+            ], 404);
+        }
+
+        // Get the file path from storage
+        $path = storage_path('app/public/' . $transaction->proof_of_payment);
+
+        if (!file_exists($path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proof of payment file not found'
+            ], 404);
+        }
+
+        // Return the file with appropriate headers
+        return response()->file($path, [
+            'Content-Type' => mime_content_type($path),
+            'Cache-Control' => 'public, max-age=3600'
         ]);
     }
 }

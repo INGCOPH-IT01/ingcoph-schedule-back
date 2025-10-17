@@ -72,6 +72,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Cart Transaction routes
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
     Route::get('/cart-transactions/{id}', [CartTransactionController::class, 'show']);
+    Route::get('/cart-transactions/{id}/proof-of-payment', [CartTransactionController::class, 'getProofOfPayment']);
     Route::delete('/cart-transactions/{id}', [CartTransactionController::class, 'destroy']);
 
     // Booking routes
@@ -84,6 +85,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Attendance status route
     Route::patch('/bookings/{id}/attendance-status', [BookingController::class, 'updateAttendanceStatus']);
+
+    // Proof of payment routes
+    Route::get('/bookings/{id}/proof-of-payment', [BookingController::class, 'getProofOfPayment']);
 
     // General booking routes
     Route::get('/bookings/{id}', [BookingController::class, 'show']);
@@ -134,5 +138,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
+        Route::delete('/admin/company-settings/payment-qr-code', [CompanySettingController::class, 'deletePaymentQrCode']);
     });
 });

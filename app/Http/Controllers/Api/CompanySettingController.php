@@ -37,7 +37,7 @@ class CompanySettingController extends Controller
             if (!isset($settings['theme_mode'])) {
                 $settings['theme_mode'] = 'light';
             }
-            
+
             // Background color settings
             if (!isset($settings['bg_primary_color'])) {
                 $settings['bg_primary_color'] = '#FFFFFF';
@@ -69,6 +69,22 @@ class CompanySettingController extends Controller
                 $settings['dashboard_show_recent_bookings'] = true;
             } else {
                 $settings['dashboard_show_recent_bookings'] = $settings['dashboard_show_recent_bookings'] === '1';
+            }
+
+            // Payment settings
+            if (!isset($settings['payment_gcash_number'])) {
+                $settings['payment_gcash_number'] = '0917-123-4567';
+            }
+            if (!isset($settings['payment_gcash_name'])) {
+                $settings['payment_gcash_name'] = 'Perfect Smash';
+            }
+            if (!isset($settings['payment_instructions'])) {
+                $settings['payment_instructions'] = 'Please send payment to our GCash number and upload proof of payment.';
+            }
+
+            // Add payment QR code URL if exists
+            if (isset($settings['payment_qr_code']) && $settings['payment_qr_code']) {
+                $settings['payment_qr_code_url'] = Storage::url($settings['payment_qr_code']);
             }
 
             return response()->json([
@@ -125,6 +141,11 @@ class CompanySettingController extends Controller
             'dashboard_announcement' => 'nullable|string|max:1000',
             'dashboard_show_stats' => 'nullable|boolean',
             'dashboard_show_recent_bookings' => 'nullable|boolean',
+            // Payment settings
+            'payment_gcash_number' => 'nullable|string|max:50',
+            'payment_gcash_name' => 'nullable|string|max:255',
+            'payment_instructions' => 'nullable|string|max:1000',
+            'payment_qr_code' => 'nullable|image|mimes:jpeg,jpg,png,gif,svg,webp|max:2048',
         ]);
 
         if ($validator->fails()) {
@@ -180,7 +201,7 @@ class CompanySettingController extends Controller
             if ($request->has('dashboard_show_recent_bookings')) {
                 CompanySetting::set('dashboard_show_recent_bookings', $request->dashboard_show_recent_bookings ? '1' : '0');
             }
-            
+
             // Save background color settings
             if ($request->has('bg_primary_color')) {
                 CompanySetting::set('bg_primary_color', $request->bg_primary_color);
@@ -196,6 +217,32 @@ class CompanySettingController extends Controller
             }
             if ($request->has('bg_pattern_color')) {
                 CompanySetting::set('bg_pattern_color', $request->bg_pattern_color);
+            }
+
+            // Save payment settings
+            if ($request->has('payment_gcash_number')) {
+                CompanySetting::set('payment_gcash_number', $request->payment_gcash_number);
+            }
+            if ($request->has('payment_gcash_name')) {
+                CompanySetting::set('payment_gcash_name', $request->payment_gcash_name);
+            }
+            if ($request->has('payment_instructions')) {
+                CompanySetting::set('payment_instructions', $request->payment_instructions);
+            }
+
+            // Handle payment QR code upload
+            if ($request->hasFile('payment_qr_code')) {
+                $qrCode = $request->file('payment_qr_code');
+
+                // Delete old QR code if exists
+                $oldQrCodePath = CompanySetting::get('payment_qr_code');
+                if ($oldQrCodePath && Storage::disk('public')->exists($oldQrCodePath)) {
+                    Storage::disk('public')->delete($oldQrCodePath);
+                }
+
+                // Store new QR code
+                $qrCodePath = $qrCode->store('payment-qr-codes', 'public');
+                CompanySetting::set('payment_qr_code', $qrCodePath);
             }
 
             Log::info('Company settings updated by admin: ' . $request->user()->email);
@@ -214,12 +261,21 @@ class CompanySettingController extends Controller
                 'bg_accent_color' => CompanySetting::get('bg_accent_color', '#FFCDD2'),
                 'bg_overlay_color' => CompanySetting::get('bg_overlay_color', 'rgba(183, 28, 28, 0.08)'),
                 'bg_pattern_color' => CompanySetting::get('bg_pattern_color', 'rgba(183, 28, 28, 0.03)'),
+                'payment_gcash_number' => CompanySetting::get('payment_gcash_number', '0917-123-4567'),
+                'payment_gcash_name' => CompanySetting::get('payment_gcash_name', 'Perfect Smash'),
+                'payment_instructions' => CompanySetting::get('payment_instructions', 'Please send payment to our GCash number and upload proof of payment.'),
             ];
 
             $logoPath = CompanySetting::get('company_logo');
             if ($logoPath) {
                 $responseData['company_logo'] = $logoPath;
                 $responseData['company_logo_url'] = Storage::url($logoPath);
+            }
+
+            $qrCodePath = CompanySetting::get('payment_qr_code');
+            if ($qrCodePath) {
+                $responseData['payment_qr_code'] = $qrCodePath;
+                $responseData['payment_qr_code_url'] = Storage::url($qrCodePath);
             }
 
             return response()->json([
@@ -261,6 +317,35 @@ class CompanySettingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete company logo: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete payment QR code
+     */
+    public function deletePaymentQrCode(Request $request)
+    {
+        try {
+            $qrCodePath = CompanySetting::get('payment_qr_code');
+
+            if ($qrCodePath && Storage::disk('public')->exists($qrCodePath)) {
+                Storage::disk('public')->delete($qrCodePath);
+            }
+
+            CompanySetting::set('payment_qr_code', null);
+
+            Log::info('Payment QR code deleted by admin: ' . $request->user()->email);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment QR code deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting payment QR code: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete payment QR code: ' . $e->getMessage()
             ], 500);
         }
     }
