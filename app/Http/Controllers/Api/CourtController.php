@@ -16,7 +16,15 @@ class CourtController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Court::with(['sport', 'sports', 'images'])->where('is_active', true);
+        $query = Court::with([
+            'sport.timeBasedPricing' => function($query) {
+                $query->where('is_active', true);
+            },
+            'sports.timeBasedPricing' => function($query) {
+                $query->where('is_active', true);
+            },
+            'images'
+        ])->where('is_active', true);
 
         if ($request->has('sport_id')) {
             // Support filtering by sport using the pivot table
@@ -94,7 +102,16 @@ class CourtController extends Controller
      */
     public function show(string $id)
     {
-        $court = Court::with(['sport', 'sports', 'bookings', 'images'])->find($id);
+        $court = Court::with([
+            'sport.timeBasedPricing' => function($query) {
+                $query->where('is_active', true);
+            },
+            'sports.timeBasedPricing' => function($query) {
+                $query->where('is_active', true);
+            },
+            'bookings',
+            'images'
+        ])->find($id);
 
         if (!$court) {
             return response()->json([
@@ -269,6 +286,50 @@ class CourtController extends Controller
         return response()->json([
             'success' => true,
             'data' => $recentBookings
+        ]);
+    }
+
+    /**
+     * Get total booked hours for a specific court
+     */
+    public function getTotalBookedHours($id)
+    {
+        $court = Court::find($id);
+
+        if (!$court) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Court not found'
+            ], 404);
+        }
+
+        // Calculate total booked hours from cart items for this court
+        // 'completed' status means the items have been checked out and are actual bookings
+        $cartItems = \App\Models\CartItem::where('court_id', $id)
+            ->where('status', 'completed')
+            ->get();
+
+        $totalHours = 0;
+        foreach ($cartItems as $item) {
+            // Parse times with the booking date to handle midnight crossings correctly
+            $bookingDate = \Carbon\Carbon::parse($item->booking_date);
+            $startTime = \Carbon\Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->start_time);
+            $endTime = \Carbon\Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->end_time);
+
+            // If end time is before or equal to start time, it crosses midnight (next day)
+            if ($endTime->lte($startTime)) {
+                $endTime->addDay();
+            }
+
+            $totalHours += $endTime->diffInHours($startTime, true); // true for floating point hours
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'court_id' => $id,
+                'total_booked_hours' => round($totalHours, 2)
+            ]
         ]);
     }
 }

@@ -643,32 +643,8 @@ class BookingController extends Controller
                     'is_booked' => false
                 ];
             } else {
-                // Handle conflicting booking
-                if ($conflictingBooking && !in_array($conflictingBooking->id, $addedBookingIds)) {
-                    $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
-                    $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
-                    $bookingDuration = $bookingEnd->diffInHours($bookingStart);
-                    // Use time-based pricing for existing bookings display
-                    $bookingPrice = $court->sport->calculatePriceForRange($bookingStart, $bookingEnd);
-
-                    $availableSlots[] = [
-                        'start' => $bookingStart->format('H:i'),
-                        'end' => $bookingEnd->format('H:i'),
-                        'start_time' => $conflictingBooking->start_time,
-                        'end_time' => $conflictingBooking->end_time,
-                        'formatted_time' => $bookingStart->format('H:i') . ' - ' . $bookingEnd->format('H:i'),
-                        'duration_hours' => $bookingDuration,
-                        'price' => $bookingPrice,
-                        'available' => false,
-                        'is_booked' => true,
-                        'booking_id' => $conflictingBooking->id,
-                        'type' => 'booking'
-                    ];
-
-                    $addedBookingIds[] = $conflictingBooking->id;
-                }
-
-                // Handle conflicting cart item
+                // Prioritize cart items over old booking records (new system uses cart items)
+                // Only show one booked slot per time period to avoid duplicates
                 if ($conflictingCartItem && !in_array($conflictingCartItem->id, $addedCartItemIds)) {
                     $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time);
                     $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time);
@@ -692,6 +668,29 @@ class BookingController extends Controller
                     ];
 
                     $addedCartItemIds[] = $conflictingCartItem->id;
+                } elseif ($conflictingBooking && !in_array($conflictingBooking->id, $addedBookingIds)) {
+                    // Only show old booking records if there's no cart item for this time slot
+                    $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
+                    $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
+                    $bookingDuration = $bookingEnd->diffInHours($bookingStart);
+                    // Use time-based pricing for existing bookings display
+                    $bookingPrice = $court->sport->calculatePriceForRange($bookingStart, $bookingEnd);
+
+                    $availableSlots[] = [
+                        'start' => $bookingStart->format('H:i'),
+                        'end' => $bookingEnd->format('H:i'),
+                        'start_time' => $conflictingBooking->start_time,
+                        'end_time' => $conflictingBooking->end_time,
+                        'formatted_time' => $bookingStart->format('H:i') . ' - ' . $bookingEnd->format('H:i'),
+                        'duration_hours' => $bookingDuration,
+                        'price' => $bookingPrice,
+                        'available' => false,
+                        'is_booked' => true,
+                        'booking_id' => $conflictingBooking->id,
+                        'type' => 'booking'
+                    ];
+
+                    $addedBookingIds[] = $conflictingBooking->id;
                 }
             }
 
@@ -831,35 +830,58 @@ class BookingController extends Controller
      */
     public function getStats()
     {
-        // Get today's date range (start and end of today)
-        $todayStart = Carbon::today();
-        $todayEnd = Carbon::today()->endOfDay();
+        // Get today's date
+        $today = Carbon::today()->toDateString();
 
-        // Calculate total hours booked for today across all courts
-        $todayApprovedBookings = Booking::where('status', 'approved')
-            ->whereNotNull('start_time')
-            ->whereNotNull('end_time')
-            ->whereDate('start_time', '>=', $todayStart)
-            ->whereDate('start_time', '<=', $todayEnd)
+        // Calculate total hours booked for today across all courts using CartItem
+        // 'completed' = checked out and booked
+        // 'pending' = temporarily in cart (we can include or exclude these)
+        $todayCartItems = \App\Models\CartItem::whereDate('booking_date', $today)
+            ->where('status', 'completed')
             ->get();
 
         $totalHours = 0;
-        foreach ($todayApprovedBookings as $booking) {
-            $startTime = Carbon::parse($booking->start_time);
-            $endTime = Carbon::parse($booking->end_time);
+        foreach ($todayCartItems as $item) {
+            // Parse times with the booking date to handle midnight crossings correctly
+            $bookingDate = Carbon::parse($item->booking_date);
+            $startTime = Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->start_time);
+            $endTime = Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->end_time);
+
+            // If end time is before or equal to start time, it crosses midnight (next day)
+            if ($endTime->lte($startTime)) {
+                $endTime->addDay();
+            }
+
             $totalHours += $endTime->diffInHours($startTime, true); // true for floating point hours
         }
 
+        // Calculate revenue from cart transactions
+        $totalRevenue = \App\Models\CartTransaction::whereIn('approval_status', ['approved', 'paid'])
+            ->sum('total_price');
+
+        $pendingRevenue = \App\Models\CartTransaction::where('approval_status', 'pending')
+            ->sum('total_price');
+
+        // Get transaction counts
+        $totalTransactions = \App\Models\CartTransaction::count();
+        $pendingTransactions = \App\Models\CartTransaction::where('approval_status', 'pending')->count();
+        $approvedTransactions = \App\Models\CartTransaction::whereIn('approval_status', ['approved', 'paid'])->count();
+        $rejectedTransactions = \App\Models\CartTransaction::where('approval_status', 'rejected')->count();
+
+        // Get total users count
+        $totalUsers = \App\Models\User::count();
+
         $stats = [
-            'total_bookings' => Booking::count(),
-            'pending_bookings' => Booking::where('status', 'pending')->count(),
-            'approved_bookings' => Booking::where('status', 'approved')->count(),
-            'rejected_bookings' => Booking::where('status', 'rejected')->count(),
-            'cancelled_bookings' => Booking::where('status', 'cancelled')->count(),
-            'completed_bookings' => Booking::where('status', 'completed')->count(),
-            'total_revenue' => Booking::where('status', 'approved')->sum('total_price'),
-            'pending_revenue' => Booking::where('status', 'pending')->sum('total_price'),
-            'total_hours' => round($totalHours, 2)
+            'total_bookings' => $totalTransactions,
+            'pending_bookings' => $pendingTransactions,
+            'approved_bookings' => $approvedTransactions,
+            'rejected_bookings' => $rejectedTransactions,
+            'cancelled_bookings' => \App\Models\CartTransaction::where('status', 'cancelled')->count(),
+            'completed_bookings' => \App\Models\CartItem::where('status', 'paid')->distinct('cart_transaction_id')->count(),
+            'total_revenue' => $totalRevenue ?? 0,
+            'pending_revenue' => $pendingRevenue ?? 0,
+            'total_hours' => round($totalHours, 2),
+            'total_users' => $totalUsers
         ];
 
         return response()->json([

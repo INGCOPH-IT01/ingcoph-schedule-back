@@ -34,6 +34,7 @@ Route::get('/courts', [CourtController::class, 'index']);
 Route::get('/courts/{id}', [CourtController::class, 'show']);
 Route::get('/courts/{courtId}/available-slots', [BookingController::class, 'availableSlots']);
 Route::get('/courts/{id}/recent-bookings', [CourtController::class, 'getRecentBookings']);
+Route::get('/courts/{id}/total-booked-hours', [CourtController::class, 'getTotalBookedHours']);
 Route::post('/save-court-image/{id}', [CourtController::class, 'saveImage']);
 
 // Public company settings routes
