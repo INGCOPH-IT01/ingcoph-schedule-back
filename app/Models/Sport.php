@@ -23,6 +23,10 @@ class Sport extends Model
         'is_active' => 'boolean',
     ];
 
+    protected $appends = [
+        'lowest_price_per_hour'
+    ];
+
     // Legacy one-to-many relationship (kept for backward compatibility)
     public function courts(): HasMany
     {
@@ -39,6 +43,29 @@ class Sport extends Model
     public function timeBasedPricing(): HasMany
     {
         return $this->hasMany(SportTimeBasedPricing::class);
+    }
+
+    /**
+     * Get the lowest price per hour from time-based pricing or default price
+     *
+     * @return float
+     */
+    public function getLowestPricePerHourAttribute(): float
+    {
+        // Get all active time-based pricing rules
+        $activeTimeBasedPrices = $this->timeBasedPricing()
+            ->where('is_active', true)
+            ->pluck('price_per_hour')
+            ->toArray();
+
+        // If there are active time-based prices, include them with the base price
+        if (!empty($activeTimeBasedPrices)) {
+            $allPrices = array_merge([$this->price_per_hour], $activeTimeBasedPrices);
+            return (float) min($allPrices);
+        }
+
+        // If no time-based pricing, return the base price
+        return (float) $this->price_per_hour;
     }
 
     /**
