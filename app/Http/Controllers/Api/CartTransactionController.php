@@ -85,14 +85,30 @@ class CartTransactionController extends Controller
             'qr_code' => $qrData
         ]);
 
-        // Also update all associated bookings to approved and add QR code
-        $transaction->bookings()->update([
-            'status' => 'approved',
-            'qr_code' => $qrData
-        ]);
-
-        // Broadcast real-time status change for each booking
+        // Update each booking individually with its own unique QR code
         foreach ($transaction->bookings as $booking) {
+            // Generate unique QR code for each booking
+            $bookingQrData = json_encode([
+                'transaction_id' => $transaction->id,
+                'booking_id' => $booking->id,
+                'user_id' => $transaction->user_id,
+                'user_name' => $transaction->user->name,
+                'court_name' => $booking->court->name ?? 'N/A',
+                'date' => $booking->date,
+                'start_time' => $booking->start_time,
+                'end_time' => $booking->end_time,
+                'price' => $booking->price,
+                'payment_method' => $transaction->payment_method,
+                'approved_at' => now()->toDateTimeString(),
+                'type' => 'cart_transaction'
+            ]);
+
+            $booking->update([
+                'status' => 'approved',
+                'qr_code' => $bookingQrData
+            ]);
+
+            // Broadcast real-time status change for this booking
             broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
         }
 
