@@ -345,7 +345,7 @@ class BookingController extends Controller
 
         $validator = Validator::make($request->all(), [
             'proof_of_payment' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
-            'payment_method' => 'required|string|in:cash,gcash,bank_transfer'
+            'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer' // Optional, defaults to gcash
         ]);
 
         if ($validator->fails()) {
@@ -377,18 +377,49 @@ class BookingController extends Controller
                 ], 500);
             }
 
-            // Update booking with proof of payment path and payment method
+            // Determine payment method: use provided, existing, or default to gcash
+            $paymentMethod = $request->payment_method;
+            if (!$paymentMethod) {
+                // Use existing payment method if not 'pending', otherwise default to 'gcash'
+                $paymentMethod = ($booking->payment_method && $booking->payment_method !== 'pending')
+                    ? $booking->payment_method
+                    : 'gcash';
+            }
+
+            // Update booking with proof of payment path, payment method, and mark as paid
             $booking->update([
                 'proof_of_payment' => $path,
-                'payment_method' => $request->payment_method
+                'payment_method' => $paymentMethod,
+                'payment_status' => 'paid',
+                'paid_at' => now()
+            ]);
+
+            // Also update the cart transaction if it exists
+            if ($booking->cart_transaction_id) {
+                $cartTransaction = \App\Models\CartTransaction::find($booking->cart_transaction_id);
+                if ($cartTransaction && $cartTransaction->payment_status !== 'paid') {
+                    $cartTransaction->update([
+                        'payment_status' => 'paid',
+                        'payment_method' => $paymentMethod,
+                        'proof_of_payment' => $path,
+                        'paid_at' => now()
+                    ]);
+                }
+            }
+
+            Log::info('Payment proof uploaded and booking marked as paid', [
+                'booking_id' => $booking->id,
+                'payment_method' => $paymentMethod
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Proof of payment uploaded successfully',
+                'message' => 'Proof of payment uploaded successfully. Booking is now marked as paid.',
                 'data' => [
                     'proof_of_payment' => $path,
-                    'payment_method' => $request->payment_method
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => 'paid',
+                    'paid_at' => $booking->paid_at
                 ]
             ]);
         } catch (\Exception $e) {
@@ -1005,6 +1036,14 @@ class BookingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Players attended cannot exceed the number of players booked (' . $booking->number_of_players . ')'
+            ], 422);
+        }
+
+        // Prevent marking as showed_up if payment has not been completed
+        if ($request->attendance_status === 'showed_up' && $booking->payment_status !== 'paid') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot mark as showed up: Payment has not been completed for this booking'
             ], 422);
         }
 

@@ -347,12 +347,19 @@ class CartController extends Controller
             Log::info('Checkout called for user: ' . $request->user()->id);
             Log::info('Request data: ' . json_encode($request->all()));
 
-        $validator = Validator::make($request->all(), [
-            'payment_method' => 'required|in:pending,gcash',
-            'proof_of_payment' => 'required_if:payment_method,gcash',
+        // Check if user is Admin or Staff
+        $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
+
+        // Build validation rules - payment is optional for Admin/Staff
+        $validationRules = [
+            'payment_method' => $isAdminOrStaff ? 'nullable|in:pending,gcash,cash' : 'required|in:pending,gcash',
+            'proof_of_payment' => $isAdminOrStaff ? 'nullable' : 'required_if:payment_method,gcash',
             'selected_items' => 'nullable|array',
-            'selected_items.*' => 'integer|exists:cart_items,id'
-        ]);
+            'selected_items.*' => 'integer|exists:cart_items,id',
+            'skip_payment' => 'nullable|boolean' // New field for Admin/Staff to explicitly skip payment
+        ];
+
+        $validator = Validator::make($request->all(), $validationRules);
 
         if ($validator->fails()) {
             Log::error('Validation failed: ' . json_encode($validator->errors()));
@@ -484,14 +491,31 @@ class CartController extends Controller
                 }
             }
 
+            // Determine payment status based on user role and payment method
+            $paymentMethod = $request->payment_method ?? 'pending';
+            $skipPayment = $request->skip_payment ?? false;
+
+            // Admin/Staff can skip payment, marking slots as booked but unpaid
+            $paymentStatus = 'unpaid';
+            $paidAt = null;
+
+            if ($paymentMethod === 'gcash' && $proofOfPaymentPath) {
+                $paymentStatus = 'paid';
+                $paidAt = now();
+            } elseif ($isAdminOrStaff && $skipPayment) {
+                // Admin/Staff explicitly skipped payment - keep as unpaid
+                $paymentStatus = 'unpaid';
+                Log::info('Admin/Staff skipped payment for transaction ' . $cartTransaction->id);
+            }
+
             // Update the existing cart transaction with payment info
             $cartTransaction->update([
                 'total_price' => $totalPrice,
                 'status' => 'completed',
-                'payment_method' => $request->payment_method,
-                'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
                 'proof_of_payment' => $proofOfPaymentPath, // Now stores file path, not base64
-                'paid_at' => $request->payment_method === 'gcash' ? now() : null
+                'paid_at' => $paidAt
             ]);
 
             Log::info('Cart transaction updated with ID: ' . $cartTransaction->id);
@@ -554,10 +578,10 @@ class CartController extends Controller
                     'total_price' => $group['price'],
                     'number_of_players' => $firstCartItem->number_of_players ?? 1,
                     'status' => 'pending',
-                    'payment_method' => $request->payment_method,
-                    'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => $paymentStatus,
                     'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
-                    'paid_at' => $request->payment_method === 'gcash' ? now() : null,
+                    'paid_at' => $paidAt,
                     'booking_for_user_id' => $firstCartItem->booking_for_user_id,
                     'booking_for_user_name' => $firstCartItem->booking_for_user_name,
                     'admin_notes' => $firstCartItem->admin_notes,
