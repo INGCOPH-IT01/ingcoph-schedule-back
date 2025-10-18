@@ -30,7 +30,6 @@ class Booking extends Model
         'frequency_end_date',
         'payment_method',
         'payment_status',
-        'gcash_reference',
         'paid_at',
         'proof_of_payment',
         'qr_code',

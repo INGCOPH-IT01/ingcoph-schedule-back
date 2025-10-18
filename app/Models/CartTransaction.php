@@ -18,7 +18,6 @@ class CartTransaction extends Model
         'rejection_reason',
         'payment_method',
         'payment_status',
-        'gcash_reference',
         'proof_of_payment',
         'paid_at',
         'qr_code',
