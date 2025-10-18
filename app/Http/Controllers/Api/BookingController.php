@@ -769,6 +769,25 @@ class BookingController extends Controller
      */
     public function getStats()
     {
+        // Get today's date range (start and end of today)
+        $todayStart = Carbon::today();
+        $todayEnd = Carbon::today()->endOfDay();
+
+        // Calculate total hours booked for today across all courts
+        $todayApprovedBookings = Booking::where('status', 'approved')
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->whereDate('start_time', '>=', $todayStart)
+            ->whereDate('start_time', '<=', $todayEnd)
+            ->get();
+
+        $totalHours = 0;
+        foreach ($todayApprovedBookings as $booking) {
+            $startTime = Carbon::parse($booking->start_time);
+            $endTime = Carbon::parse($booking->end_time);
+            $totalHours += $endTime->diffInHours($startTime, true); // true for floating point hours
+        }
+
         $stats = [
             'total_bookings' => Booking::count(),
             'pending_bookings' => Booking::where('status', 'pending')->count(),
@@ -777,7 +796,8 @@ class BookingController extends Controller
             'cancelled_bookings' => Booking::where('status', 'cancelled')->count(),
             'completed_bookings' => Booking::where('status', 'completed')->count(),
             'total_revenue' => Booking::where('status', 'approved')->sum('total_price'),
-            'pending_revenue' => Booking::where('status', 'pending')->sum('total_price')
+            'pending_revenue' => Booking::where('status', 'pending')->sum('total_price'),
+            'total_hours' => round($totalHours, 2)
         ];
 
         return response()->json([
