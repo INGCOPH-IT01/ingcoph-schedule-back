@@ -117,15 +117,11 @@ class BookingController extends Controller
                 })->orWhere(function ($q) use ($startTime, $endTime) {
                     // New booking ends during existing booking
                     $q->where('start_time', '<', $endTime)
-                      ->where('end_time', '>=', $endTime);
+                      ->where('end_time', '>', $endTime);
                 })->orWhere(function ($q) use ($startTime, $endTime) {
                     // New booking completely contains existing booking
                     $q->where('start_time', '>=', $startTime)
                       ->where('end_time', '<=', $endTime);
-                })->orWhere(function ($q) use ($startTime, $endTime) {
-                    // Existing booking completely contains new booking
-                    $q->where('start_time', '<=', $startTime)
-                      ->where('end_time', '>=', $endTime);
                 });
             })
             ->first();
@@ -252,12 +248,19 @@ class BookingController extends Controller
             ->where('id', '!=', $id)
             ->whereIn('status', ['pending', 'approved', 'completed'])
             ->where(function ($query) use ($request) {
-                $query->whereBetween('start_time', [$request->start_time, $request->end_time])
-                    ->orWhereBetween('end_time', [$request->start_time, $request->end_time])
-                    ->orWhere(function ($q) use ($request) {
-                        $q->where('start_time', '<=', $request->start_time)
-                          ->where('end_time', '>=', $request->end_time);
-                    });
+                $query->where(function ($q) use ($request) {
+                    // Existing booking starts during new booking (exclusive boundaries)
+                    $q->where('start_time', '>=', $request->start_time)
+                      ->where('start_time', '<', $request->end_time);
+                })->orWhere(function ($q) use ($request) {
+                    // Existing booking ends during new booking (exclusive boundaries)
+                    $q->where('end_time', '>', $request->start_time)
+                      ->where('end_time', '<=', $request->end_time);
+                })->orWhere(function ($q) use ($request) {
+                    // Existing booking completely contains new booking
+                    $q->where('start_time', '<=', $request->start_time)
+                      ->where('end_time', '>=', $request->end_time);
+                });
             })
             ->first();
 

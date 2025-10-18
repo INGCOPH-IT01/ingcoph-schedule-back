@@ -136,16 +136,25 @@ class CartController extends Controller
                 }
 
                 // Check if time slot is still available
+                $startDateTime = $item['booking_date'] . ' ' . $item['start_time'];
+                $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
+
                 $isBooked = Booking::where('court_id', $item['court_id'])
                     ->whereDate('start_time', $item['booking_date'])
-                    ->where(function ($query) use ($item) {
-                        $query->whereBetween('start_time', [
-                            $item['booking_date'] . ' ' . $item['start_time'],
-                            $item['booking_date'] . ' ' . $item['end_time']
-                        ])->orWhereBetween('end_time', [
-                            $item['booking_date'] . ' ' . $item['start_time'],
-                            $item['booking_date'] . ' ' . $item['end_time']
-                        ]);
+                    ->where(function ($query) use ($startDateTime, $endDateTime) {
+                        $query->where(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking starts during new booking (exclusive boundaries)
+                            $q->where('start_time', '>=', $startDateTime)
+                              ->where('start_time', '<', $endDateTime);
+                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking ends during new booking (exclusive boundaries)
+                            $q->where('end_time', '>', $startDateTime)
+                              ->where('end_time', '<=', $endDateTime);
+                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking completely contains new booking
+                            $q->where('start_time', '<=', $startDateTime)
+                              ->where('end_time', '>=', $endDateTime);
+                        });
                     })
                     ->exists();
 
@@ -484,12 +493,19 @@ class CartController extends Controller
                         $startDateTime = $group['booking_date'] . ' ' . $group['start_time'];
                         $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
 
-                        $query->whereBetween('start_time', [$startDateTime, $endDateTime])
-                            ->orWhereBetween('end_time', [$startDateTime, $endDateTime])
-                            ->orWhere(function ($q) use ($startDateTime, $endDateTime) {
-                                $q->where('start_time', '<=', $startDateTime)
-                                  ->where('end_time', '>=', $endDateTime);
-                            });
+                        $query->where(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking starts during new booking (exclusive boundaries)
+                            $q->where('start_time', '>=', $startDateTime)
+                              ->where('start_time', '<', $endDateTime);
+                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking ends during new booking (exclusive boundaries)
+                            $q->where('end_time', '>', $startDateTime)
+                              ->where('end_time', '<=', $endDateTime);
+                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                            // Existing booking completely contains new booking
+                            $q->where('start_time', '<=', $startDateTime)
+                              ->where('end_time', '>=', $endDateTime);
+                        });
                     })
                     ->exists();
 
