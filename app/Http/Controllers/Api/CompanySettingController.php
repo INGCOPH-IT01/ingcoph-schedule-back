@@ -87,6 +87,17 @@ class CompanySettingController extends Controller
                 $settings['payment_qr_code_url'] = Storage::url($settings['payment_qr_code']);
             }
 
+            // Contact information settings
+            if (!isset($settings['contact_viber'])) {
+                $settings['contact_viber'] = '';
+            }
+            if (!isset($settings['contact_mobile'])) {
+                $settings['contact_mobile'] = '';
+            }
+            if (!isset($settings['contact_email'])) {
+                $settings['contact_email'] = '';
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $settings
@@ -146,6 +157,10 @@ class CompanySettingController extends Controller
             'payment_gcash_name' => 'nullable|string|max:255',
             'payment_instructions' => 'nullable|string|max:1000',
             'payment_qr_code' => 'nullable|image|mimes:jpeg,jpg,png,gif,svg,webp|max:2048',
+            // Contact information
+            'contact_viber' => 'nullable|string|max:100',
+            'contact_mobile' => 'nullable|string|max:50',
+            'contact_email' => 'nullable|email|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -245,6 +260,17 @@ class CompanySettingController extends Controller
                 CompanySetting::set('payment_qr_code', $qrCodePath);
             }
 
+            // Save contact information
+            if ($request->has('contact_viber')) {
+                CompanySetting::set('contact_viber', $request->contact_viber);
+            }
+            if ($request->has('contact_mobile')) {
+                CompanySetting::set('contact_mobile', $request->contact_mobile);
+            }
+            if ($request->has('contact_email')) {
+                CompanySetting::set('contact_email', $request->contact_email);
+            }
+
             Log::info('Company settings updated by admin: ' . $request->user()->email);
 
             $responseData = [
@@ -264,6 +290,9 @@ class CompanySettingController extends Controller
                 'payment_gcash_number' => CompanySetting::get('payment_gcash_number', '0917-123-4567'),
                 'payment_gcash_name' => CompanySetting::get('payment_gcash_name', 'Perfect Smash'),
                 'payment_instructions' => CompanySetting::get('payment_instructions', 'Please send payment to our GCash number and upload proof of payment.'),
+                'contact_viber' => CompanySetting::get('contact_viber', ''),
+                'contact_mobile' => CompanySetting::get('contact_mobile', ''),
+                'contact_email' => CompanySetting::get('contact_email', ''),
             ];
 
             $logoPath = CompanySetting::get('company_logo');
