@@ -17,7 +17,7 @@ class CartTransactionController extends Controller
      */
     public function index(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->where('user_id', $request->user()->id)
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
@@ -31,7 +31,7 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
             ->get();
@@ -44,7 +44,7 @@ class CartTransactionController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->findOrFail($id);
 
         // Check if user owns this transaction or is admin/staff
@@ -131,6 +131,7 @@ class CartTransactionController extends Controller
                           ->orderBy('start_time');
                 },
                 'cartItems.court.sport',
+                'cartItems.sport',
                 'cartItems.court'
             ])->find($transaction->id);
 
@@ -202,7 +203,7 @@ class CartTransactionController extends Controller
      */
     public function pending(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings'])
             ->where('approval_status', 'pending')
             ->where('payment_status', 'paid')
             ->orderBy('created_at', 'asc')
@@ -226,7 +227,7 @@ class CartTransactionController extends Controller
                 ], 400);
             }
 
-            $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images'])
+            $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images'])
                 ->find($qrData['transaction_id']);
 
             if (!$transaction) {
@@ -371,7 +372,7 @@ class CartTransactionController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Attendance status updated successfully',
-            'transaction' => $transaction->load(['user', 'cartItems.court.sport'])
+            'transaction' => $transaction->load(['user', 'cartItems.court.sport', 'cartItems.sport'])
         ]);
     }
 

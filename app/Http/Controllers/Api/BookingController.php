@@ -21,7 +21,7 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Booking::with(['user', 'bookingForUser', 'court.sport', 'court.images', 'cartTransaction.cartItems.court']);
+        $query = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport']);
 
         // For regular users, show bookings where they are either:
         // 1. The user who created it (user_id)
@@ -63,6 +63,7 @@ class BookingController extends Controller
 
         $validator = Validator::make($request->all(), [
             'court_id' => 'required|exists:courts,id',
+            'sport_id' => 'nullable|exists:sports,id',
             'start_time' => 'required|date',
             'end_time' => 'required|date|after:start_time',
             'number_of_players' => 'nullable|integer|min:1|max:100',
@@ -147,6 +148,7 @@ class BookingController extends Controller
         $booking = Booking::create([
             'user_id' => $request->user()->id,
             'court_id' => $court->id,
+            'sport_id' => $request->sport_id ?? $court->sport_id,
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,
             'total_price' => $totalPrice,
@@ -165,7 +167,6 @@ class BookingController extends Controller
             'frequency_end_date' => $request->frequency_end_date,
             'payment_method' => $request->payment_method ?? 'pending',
             'payment_status' => $request->payment_status ?? 'unpaid',
-            'gcash_reference' => $request->gcash_reference,
             'proof_of_payment' => $request->proof_of_payment,
             'paid_at' => $request->payment_status === 'paid' ? now() : null,
         ]);
@@ -176,7 +177,7 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Booking created successfully',
-            'data' => $booking->load(['user', 'court.sport'])
+            'data' => $booking->load(['user', 'court', 'sport'])
         ], 201);
     }
 
@@ -185,7 +186,7 @@ class BookingController extends Controller
      */
     public function show(string $id)
     {
-        $booking = Booking::with(['user', 'bookingForUser', 'court.sport', 'court.images', 'cartTransaction.cartItems.court'])->find($id);
+        $booking = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])->find($id);
 
         if (!$booking) {
             return response()->json([
@@ -309,7 +310,7 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Booking updated successfully',
-            'data' => $booking->load(['user', 'court.sport'])
+            'data' => $booking->load(['user', 'court', 'sport'])
         ]);
     }
 
@@ -708,7 +709,7 @@ class BookingController extends Controller
      */
     public function pendingBookings()
     {
-        $bookings = Booking::with(['user', 'court.sport', 'court.images', 'cartTransaction.cartItems.court'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
             ->where('status', 'pending')
             ->orderBy('created_at', 'desc')
             ->get();
@@ -821,7 +822,7 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Booking rejected successfully',
-            'data' => $booking->load(['user', 'court.sport'])
+            'data' => $booking->load(['user', 'court', 'sport'])
         ]);
     }
 
@@ -985,7 +986,7 @@ class BookingController extends Controller
      */
     public function getApprovedBookings(Request $request)
     {
-        $bookings = Booking::with(['user', 'court.sport', 'court.images', 'cartTransaction.cartItems.court'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
             ->where('status', Booking::STATUS_APPROVED)
             ->orderBy('start_time', 'asc')
             ->get();
@@ -1069,7 +1070,7 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Attendance status updated successfully',
-            'data' => $booking->load(['user', 'court.sport'])
+            'data' => $booking->load(['user', 'court', 'sport'])
         ]);
     }
 }

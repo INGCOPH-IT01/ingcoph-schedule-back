@@ -14,6 +14,7 @@ class Booking extends Model
         'booking_for_user_name',
         'cart_transaction_id',
         'court_id',
+        'sport_id',
         'start_time',
         'end_time',
         'total_price',
@@ -90,6 +91,11 @@ class Booking extends Model
     public function court(): BelongsTo
     {
         return $this->belongsTo(Court::class);
+    }
+
+    public function sport(): BelongsTo
+    {
+        return $this->belongsTo(Sport::class);
     }
 
     /**

@@ -24,27 +24,34 @@ class CartController extends Controller
         // First, check and expire any cart items older than 1 hour
         $this->checkAndExpireCartItems($request->user()->id);
 
-        $cartTransaction = CartTransaction::with(['cartItems' => function($query) {
+        // Get ALL pending cart transactions for the user
+        $cartTransactions = CartTransaction::with(['cartItems' => function($query) {
                 $query->where('status', 'pending');
-            }, 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookingForUser', 'user'])
+            }, 'cartItems.court', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookingForUser', 'user'])
             ->where('user_id', $request->user()->id)
             ->where('status', 'pending')
             ->where('payment_status', 'unpaid')
-            ->first();
+            ->orderBy('created_at', 'asc')
+            ->get();
 
-        if (!$cartTransaction) {
+        if ($cartTransactions->isEmpty()) {
             return response()->json([
                 'cart_transaction' => null,
                 'cart_items' => []
             ]);
         }
 
-        // Filter to only pending items
-        $pendingItems = $cartTransaction->cartItems->where('status', 'pending')->values();
+        // Collect all pending items from all transactions
+        $allPendingItems = collect();
+        foreach ($cartTransactions as $transaction) {
+            $pendingItems = $transaction->cartItems->where('status', 'pending');
+            $allPendingItems = $allPendingItems->merge($pendingItems);
+        }
 
+        // Return the first transaction as primary, but include all items
         return response()->json([
-            'cart_transaction' => $cartTransaction,
-            'cart_items' => $pendingItems
+            'cart_transaction' => $cartTransactions->first(),
+            'cart_items' => $allPendingItems->values()
         ]);
     }
 
@@ -89,6 +96,7 @@ class CartController extends Controller
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.court_id' => 'required|exists:courts,id',
+            'items.*.sport_id' => 'required|exists:sports,id',
             'items.*.booking_date' => 'required|date',
             'items.*.start_time' => 'required|date_format:H:i',
             'items.*.end_time' => 'required|date_format:H:i',  // Removed after validation to allow midnight crossing
@@ -188,6 +196,7 @@ class CartController extends Controller
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
                     'court_id' => $item['court_id'],
+                    'sport_id' => $item['sport_id'],
                     'booking_date' => $item['booking_date'],
                     'start_time' => $item['start_time'],
                     'end_time' => $item['end_time'],
@@ -205,7 +214,7 @@ class CartController extends Controller
                 ]));
 
                 $totalPrice += floatval($item['price']);
-                $addedItems[] = $cartItem->load(['court.sport', 'court.images']);
+                $addedItems[] = $cartItem->load(['court', 'sport', 'court.images']);
             }
 
             // Update cart transaction total price
@@ -573,6 +582,7 @@ class CartController extends Controller
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
                     'court_id' => $group['court_id'],
+                    'sport_id' => $firstCartItem->sport_id,
                     'start_time' => $startDateTime,  // Use adjusted datetime that handles midnight crossing
                     'end_time' => $endDateTime,  // Use adjusted datetime that handles midnight crossing
                     'total_price' => $group['price'],
@@ -589,7 +599,7 @@ class CartController extends Controller
 
                 Log::info('Booking created with ID: ' . $booking->id);
 
-                $createdBookings[] = $booking->load(['user', 'court.sport', 'court.images', 'cartTransaction']);
+                $createdBookings[] = $booking->load(['user', 'court', 'sport', 'court.images', 'cartTransaction']);
 
                 // Broadcast booking created event in real-time
                 broadcast(new BookingCreated($booking))->toOthers();

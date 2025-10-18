@@ -14,6 +14,7 @@ class CartItem extends Model
         'booking_for_user_name',
         'cart_transaction_id',
         'court_id',
+        'sport_id',
         'booking_date',
         'start_time',
         'end_time',
@@ -52,6 +53,14 @@ class CartItem extends Model
     public function court(): BelongsTo
     {
         return $this->belongsTo(Court::class);
+    }
+
+    /**
+     * Get the sport for this cart item
+     */
+    public function sport(): BelongsTo
+    {
+        return $this->belongsTo(Sport::class);
     }
 
     /**
