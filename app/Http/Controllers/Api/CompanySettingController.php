@@ -98,6 +98,35 @@ class CompanySettingController extends Controller
                 $settings['contact_email'] = '';
             }
 
+            // Operating hours settings
+            if (!isset($settings['operating_hours_opening'])) {
+                $settings['operating_hours_opening'] = '08:00';
+            }
+            if (!isset($settings['operating_hours_closing'])) {
+                $settings['operating_hours_closing'] = '22:00';
+            }
+            if (!isset($settings['operating_hours_enabled'])) {
+                $settings['operating_hours_enabled'] = true;
+            } else {
+                $settings['operating_hours_enabled'] = $settings['operating_hours_enabled'] === '1';
+            }
+
+            // Day-specific operating hours
+            $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+            foreach ($days as $day) {
+                if (!isset($settings["operating_hours_{$day}_open"])) {
+                    $settings["operating_hours_{$day}_open"] = '08:00';
+                }
+                if (!isset($settings["operating_hours_{$day}_close"])) {
+                    $settings["operating_hours_{$day}_close"] = '22:00';
+                }
+                if (!isset($settings["operating_hours_{$day}_operational"])) {
+                    $settings["operating_hours_{$day}_operational"] = true;
+                } else {
+                    $settings["operating_hours_{$day}_operational"] = $settings["operating_hours_{$day}_operational"] === '1';
+                }
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $settings
@@ -161,6 +190,32 @@ class CompanySettingController extends Controller
             'contact_viber' => 'nullable|string|max:100',
             'contact_mobile' => 'nullable|string|max:50',
             'contact_email' => 'nullable|email|max:255',
+            // Operating hours
+            'operating_hours_opening' => 'nullable|string|max:5',
+            'operating_hours_closing' => 'nullable|string|max:5',
+            'operating_hours_enabled' => 'nullable|boolean',
+            'operating_hours_monday_open' => 'nullable|string|max:5',
+            'operating_hours_monday_close' => 'nullable|string|max:5',
+            'operating_hours_tuesday_open' => 'nullable|string|max:5',
+            'operating_hours_tuesday_close' => 'nullable|string|max:5',
+            'operating_hours_wednesday_open' => 'nullable|string|max:5',
+            'operating_hours_wednesday_close' => 'nullable|string|max:5',
+            'operating_hours_thursday_open' => 'nullable|string|max:5',
+            'operating_hours_thursday_close' => 'nullable|string|max:5',
+            'operating_hours_friday_open' => 'nullable|string|max:5',
+            'operating_hours_friday_close' => 'nullable|string|max:5',
+            'operating_hours_saturday_open' => 'nullable|string|max:5',
+            'operating_hours_saturday_close' => 'nullable|string|max:5',
+            'operating_hours_sunday_open' => 'nullable|string|max:5',
+            'operating_hours_sunday_close' => 'nullable|string|max:5',
+            // Day operational status
+            'operating_hours_monday_operational' => 'nullable|boolean',
+            'operating_hours_tuesday_operational' => 'nullable|boolean',
+            'operating_hours_wednesday_operational' => 'nullable|boolean',
+            'operating_hours_thursday_operational' => 'nullable|boolean',
+            'operating_hours_friday_operational' => 'nullable|boolean',
+            'operating_hours_saturday_operational' => 'nullable|boolean',
+            'operating_hours_sunday_operational' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -271,6 +326,31 @@ class CompanySettingController extends Controller
                 CompanySetting::set('contact_email', $request->contact_email);
             }
 
+            // Save operating hours
+            if ($request->has('operating_hours_opening')) {
+                CompanySetting::set('operating_hours_opening', $request->operating_hours_opening);
+            }
+            if ($request->has('operating_hours_closing')) {
+                CompanySetting::set('operating_hours_closing', $request->operating_hours_closing);
+            }
+            if ($request->has('operating_hours_enabled')) {
+                CompanySetting::set('operating_hours_enabled', $request->operating_hours_enabled ? '1' : '0');
+            }
+
+            // Save day-specific operating hours
+            $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+            foreach ($days as $day) {
+                if ($request->has("operating_hours_{$day}_open")) {
+                    CompanySetting::set("operating_hours_{$day}_open", $request->input("operating_hours_{$day}_open"));
+                }
+                if ($request->has("operating_hours_{$day}_close")) {
+                    CompanySetting::set("operating_hours_{$day}_close", $request->input("operating_hours_{$day}_close"));
+                }
+                if ($request->has("operating_hours_{$day}_operational")) {
+                    CompanySetting::set("operating_hours_{$day}_operational", $request->input("operating_hours_{$day}_operational") ? '1' : '0');
+                }
+            }
+
             Log::info('Company settings updated by admin: ' . $request->user()->email);
 
             $responseData = [
@@ -293,7 +373,18 @@ class CompanySettingController extends Controller
                 'contact_viber' => CompanySetting::get('contact_viber', ''),
                 'contact_mobile' => CompanySetting::get('contact_mobile', ''),
                 'contact_email' => CompanySetting::get('contact_email', ''),
+                'operating_hours_opening' => CompanySetting::get('operating_hours_opening', '08:00'),
+                'operating_hours_closing' => CompanySetting::get('operating_hours_closing', '22:00'),
+                'operating_hours_enabled' => CompanySetting::get('operating_hours_enabled', '1') === '1',
             ];
+
+            // Add day-specific operating hours to response
+            $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+            foreach ($days as $day) {
+                $responseData["operating_hours_{$day}_open"] = CompanySetting::get("operating_hours_{$day}_open", '08:00');
+                $responseData["operating_hours_{$day}_close"] = CompanySetting::get("operating_hours_{$day}_close", '22:00');
+                $responseData["operating_hours_{$day}_operational"] = CompanySetting::get("operating_hours_{$day}_operational", '1') === '1';
+            }
 
             $logoPath = CompanySetting::get('company_logo');
             if ($logoPath) {
