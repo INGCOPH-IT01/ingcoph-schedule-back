@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class CartItem extends Model
 {
@@ -57,5 +58,21 @@ class CartItem extends Model
     public function cartTransaction(): BelongsTo
     {
         return $this->belongsTo(CartTransaction::class);
+    }
+
+    /**
+     * Get the bookings associated with this cart item through the cart transaction
+     * This allows accessing all bookings created from the same cart transaction
+     */
+    public function bookings(): HasManyThrough
+    {
+        return $this->hasManyThrough(
+            Booking::class,              // The final model we want to access
+            CartTransaction::class,      // The intermediate model
+            'id',                        // Foreign key on cart_transactions table (what cart_items.cart_transaction_id references)
+            'cart_transaction_id',       // Foreign key on bookings table (what references cart_transactions.id)
+            'cart_transaction_id',       // Local key on cart_items table
+            'id'                         // Local key on cart_transactions table
+        );
     }
 }

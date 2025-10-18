@@ -50,4 +50,17 @@ class CartTransaction extends Model
     {
         return $this->belongsTo(User::class, 'approved_by');
     }
+
+    /**
+     * Sync bookings status with cart transaction approval status
+     * This ensures that when a cart transaction is approved/rejected,
+     * all associated bookings reflect the same status
+     *
+     * @param string $status The status to set ('approved', 'rejected', 'pending')
+     * @return void
+     */
+    public function syncBookingsStatus(string $status): void
+    {
+        $this->bookings()->update(['status' => $status]);
+    }
 }

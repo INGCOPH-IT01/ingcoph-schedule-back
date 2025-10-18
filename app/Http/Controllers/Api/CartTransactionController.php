@@ -17,7 +17,7 @@ class CartTransactionController extends Controller
      */
     public function index(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'approver'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->where('user_id', $request->user()->id)
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
@@ -31,7 +31,7 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'approver'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
             ->get();
@@ -44,7 +44,7 @@ class CartTransactionController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'bookings', 'approver'])
+        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->findOrFail($id);
 
         // Check if user owns this transaction or is admin/staff
@@ -61,7 +61,7 @@ class CartTransactionController extends Controller
      */
     public function approve(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['cartItems.court', 'user'])->findOrFail($id);
+        $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])->findOrFail($id);
 
         if ($transaction->approval_status === 'approved') {
             return response()->json(['message' => 'Transaction already approved'], 400);
@@ -78,6 +78,7 @@ class CartTransactionController extends Controller
             'type' => 'cart_transaction'
         ]);
 
+        // Update the cart transaction status
         $transaction->update([
             'approval_status' => 'approved',
             'approved_by' => $request->user()->id,
@@ -85,7 +86,7 @@ class CartTransactionController extends Controller
             'qr_code' => $qrData
         ]);
 
-        // Update each booking individually with its own unique QR code
+        // Update all associated bookings status to 'approved' with individual QR codes
         foreach ($transaction->bookings as $booking) {
             // Generate unique QR code for each booking
             $bookingQrData = json_encode([
@@ -103,6 +104,7 @@ class CartTransactionController extends Controller
                 'type' => 'cart_transaction'
             ]);
 
+            // Update booking status to match cart transaction approval status
             $booking->update([
                 'status' => 'approved',
                 'qr_code' => $bookingQrData
@@ -158,12 +160,13 @@ class CartTransactionController extends Controller
             'reason' => 'required|string|max:500'
         ]);
 
-        $transaction = CartTransaction::with(['cartItems.court', 'user'])->findOrFail($id);
+        $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])->findOrFail($id);
 
         if ($transaction->approval_status === 'rejected') {
             return response()->json(['message' => 'Transaction already rejected'], 400);
         }
 
+        // Update the cart transaction status
         $transaction->update([
             'approval_status' => 'rejected',
             'approved_by' => $request->user()->id,
@@ -171,7 +174,7 @@ class CartTransactionController extends Controller
             'rejection_reason' => $request->reason
         ]);
 
-        // Also update all associated bookings to rejected
+        // Update all associated bookings status to 'rejected' to match cart transaction
         $transaction->bookings()->update([
             'status' => 'rejected'
         ]);
@@ -199,7 +202,7 @@ class CartTransactionController extends Controller
      */
     public function pending(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings'])
             ->where('approval_status', 'pending')
             ->where('payment_status', 'paid')
             ->orderBy('created_at', 'asc')
