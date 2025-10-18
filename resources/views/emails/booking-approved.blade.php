@@ -237,14 +237,14 @@
             <!-- Booking Details -->
             <div class="booking-details">
                 <h3 style="margin-top: 0; color: #1e293b;">📋 Booking Details</h3>
-                
+
                 @foreach($bookingDetails as $detail)
                 <div class="booking-item">
                     <div class="court-name">
                         🏟️ {{ $detail['court']->name }}
                     </div>
                     <span class="sport-badge">{{ $detail['sport']->name }}</span>
-                    
+
                     <div class="booking-date">
                         📅 {{ \Carbon\Carbon::parse($detail['date'])->format('l, F j, Y') }}
                     </div>
@@ -253,7 +253,7 @@
                         @foreach($detail['slots'] as $slot)
                         <div class="time-slot">
                             <span class="time-text">
-                                ⏰ {{ \Carbon\Carbon::parse($slot['start_time'])->format('g:i A') }} - 
+                                ⏰ {{ \Carbon\Carbon::parse($slot['start_time'])->format('g:i A') }} -
                                 {{ \Carbon\Carbon::parse($slot['end_time'])->format('g:i A') }}
                             </span>
                             <span class="price-text">₱{{ number_format($slot['price'], 2) }}</span>
@@ -326,6 +326,37 @@
             <div class="message">
                 If you have any questions or need to make changes, please contact us immediately.
             </div>
+
+            @if($contactEmail || $contactMobile || $contactViber)
+            <!-- Contact Information -->
+            <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #10b981; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                <h3 style="margin-top: 0; color: #065f46; font-size: 18px;">
+                    📞 Contact Us
+                </h3>
+                <div style="color: #047857; font-size: 14px; line-height: 1.8;">
+                    @if($contactEmail)
+                    <div style="margin: 8px 0;">
+                        <strong>📧 Email:</strong>
+                        <a href="mailto:{{ $contactEmail }}" style="color: #059669; text-decoration: none;">{{ $contactEmail }}</a>
+                    </div>
+                    @endif
+
+                    @if($contactMobile)
+                    <div style="margin: 8px 0;">
+                        <strong>📱 Mobile:</strong>
+                        <a href="tel:{{ $contactMobile }}" style="color: #059669; text-decoration: none;">{{ $contactMobile }}</a>
+                    </div>
+                    @endif
+
+                    @if($contactViber)
+                    <div style="margin: 8px 0;">
+                        <strong>💬 Viber:</strong>
+                        <span style="color: #047857;">{{ $contactViber }}</span>
+                    </div>
+                    @endif
+                </div>
+            </div>
+            @endif
         </div>
 
         <!-- Footer -->
@@ -337,4 +368,3 @@
     </div>
 </body>
 </html>
-

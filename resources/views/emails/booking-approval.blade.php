@@ -104,39 +104,39 @@
 
         <div class="booking-details">
             <h3 style="margin-top: 0; color: #4CAF50;">📅 Booking Details</h3>
-            
+
             <div class="detail-row">
                 <span class="detail-label">Court:</span>
                 <span class="detail-value">{{ $court->name }} ({{ $sport->name }})</span>
             </div>
-            
+
             <div class="detail-row">
                 <span class="detail-label">Date:</span>
                 <span class="detail-value">{{ \Carbon\Carbon::parse($booking->start_time)->format('F j, Y') }}</span>
             </div>
-            
+
             <div class="detail-row">
                 <span class="detail-label">Time:</span>
                 <span class="detail-value">{{ \Carbon\Carbon::parse($booking->start_time)->format('g:i A') }} - {{ \Carbon\Carbon::parse($booking->end_time)->format('g:i A') }}</span>
             </div>
-            
+
             <div class="detail-row">
                 <span class="detail-label">Duration:</span>
                 <span class="detail-value">{{ \Carbon\Carbon::parse($booking->start_time)->diffInHours(\Carbon\Carbon::parse($booking->end_time)) }} hour(s)</span>
             </div>
-            
+
             <div class="detail-row">
                 <span class="detail-label">Total Price:</span>
                 <span class="detail-value price">₱{{ number_format($booking->total_price, 2) }}</span>
             </div>
-            
+
             @if($booking->payment_method)
             <div class="detail-row">
                 <span class="detail-label">Payment Method:</span>
                 <span class="detail-value">{{ ucfirst($booking->payment_method) }}</span>
             </div>
             @endif
-            
+
             @if($booking->notes)
             <div class="detail-row">
                 <span class="detail-label">Notes:</span>
@@ -159,9 +159,39 @@
             <a href="{{ env('APP_URL') }}/bookings" class="cta-button">View My Bookings</a>
         </div>
 
+        <p>If you have any questions, please don't hesitate to contact us.</p>
+
+        @if($contactEmail || $contactMobile || $contactViber)
+        <!-- Contact Information -->
+        <div style="background-color: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <h4 style="margin-top: 0; color: #2e7d32;">📞 Contact Information</h4>
+            <div style="color: #1b5e20; font-size: 14px; line-height: 1.8;">
+                @if($contactEmail)
+                <div style="margin: 8px 0;">
+                    <strong>📧 Email:</strong>
+                    <a href="mailto:{{ $contactEmail }}" style="color: #2e7d32; text-decoration: none;">{{ $contactEmail }}</a>
+                </div>
+                @endif
+
+                @if($contactMobile)
+                <div style="margin: 8px 0;">
+                    <strong>📱 Mobile:</strong>
+                    <a href="tel:{{ $contactMobile }}" style="color: #2e7d32; text-decoration: none;">{{ $contactMobile }}</a>
+                </div>
+                @endif
+
+                @if($contactViber)
+                <div style="margin: 8px 0;">
+                    <strong>💬 Viber:</strong>
+                    <span style="color: #1b5e20;">{{ $contactViber }}</span>
+                </div>
+                @endif
+            </div>
+        </div>
+        @endif
+
         <div class="footer">
             <p>Thank you for choosing our facility!</p>
-            <p>If you have any questions, please don't hesitate to contact us.</p>
             <p><strong>Court Schedule Management System</strong></p>
         </div>
     </div>

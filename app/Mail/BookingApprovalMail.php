@@ -9,6 +9,7 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 use App\Models\Booking;
+use App\Models\CompanySetting;
 
 class BookingApprovalMail extends Mailable
 {
@@ -46,6 +47,9 @@ class BookingApprovalMail extends Mailable
                 'user' => $this->booking->user,
                 'court' => $this->booking->court,
                 'sport' => $this->booking->court->sport,
+                'contactEmail' => CompanySetting::get('contact_email', ''),
+                'contactMobile' => CompanySetting::get('contact_mobile', ''),
+                'contactViber' => CompanySetting::get('contact_viber', ''),
             ]
         );
     }

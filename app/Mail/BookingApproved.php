@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\CartTransaction;
+use App\Models\CompanySetting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -17,6 +18,9 @@ class BookingApproved extends Mailable
     public $transaction;
     public $user;
     public $bookingDetails;
+    public $contactEmail;
+    public $contactMobile;
+    public $contactViber;
 
     /**
      * Create a new message instance.
@@ -25,9 +29,14 @@ class BookingApproved extends Mailable
     {
         $this->transaction = $transaction;
         $this->user = $transaction->user;
-        
+
         // Prepare booking details grouped by court and date
         $this->bookingDetails = $this->prepareBookingDetails();
+
+        // Load contact details from company settings
+        $this->contactEmail = CompanySetting::get('contact_email', '');
+        $this->contactMobile = CompanySetting::get('contact_mobile', '');
+        $this->contactViber = CompanySetting::get('contact_viber', '');
     }
 
     /**
@@ -36,14 +45,14 @@ class BookingApproved extends Mailable
     private function prepareBookingDetails()
     {
         $details = [];
-        
+
         foreach ($this->transaction->cartItems as $item) {
             if ($item->status === 'cancelled') {
                 continue;
             }
 
             $key = $item->court_id . '_' . $item->booking_date;
-            
+
             if (!isset($details[$key])) {
                 $details[$key] = [
                     'court' => $item->court,
@@ -53,16 +62,16 @@ class BookingApproved extends Mailable
                     'total_price' => 0
                 ];
             }
-            
+
             $details[$key]['slots'][] = [
                 'start_time' => $item->start_time,
                 'end_time' => $item->end_time,
                 'price' => $item->price
             ];
-            
+
             $details[$key]['total_price'] += $item->price;
         }
-        
+
         return array_values($details);
     }
 
