@@ -506,6 +506,21 @@ class BookingController extends Controller
         $startOfDay = $date->copy()->startOfDay();
         $endOfDay = $date->copy()->endOfDay();
 
+        // Get operating hours for the specific day
+        $dayOfWeek = strtolower($date->englishDayOfWeek); // monday, tuesday, etc.
+        $operatingHoursOpen = \App\Models\CompanySetting::get("operating_hours_{$dayOfWeek}_open", '08:00');
+        $operatingHoursClose = \App\Models\CompanySetting::get("operating_hours_{$dayOfWeek}_close", '22:00');
+        $isOperational = \App\Models\CompanySetting::get("operating_hours_{$dayOfWeek}_operational", '1') === '1';
+
+        // Check if the facility is operational on this day
+        if (!$isOperational) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+                'message' => 'Facility is closed on this day'
+            ]);
+        }
+
         // Get all non-cancelled bookings for this court on the specified date
         $bookings = Booking::where('court_id', $courtId)
             ->whereIn('status', ['pending', 'approved', 'completed']) // Only consider active bookings
@@ -535,8 +550,21 @@ class BookingController extends Controller
             ->get();
 
         $availableSlots = [];
-        $currentTime = $startOfDay->copy()->setHour(6); // Start from 6 AM
-        $endTime = $endOfDay->copy()->setHour(22); // End at 10 PM
+
+        // Parse operating hours and set start/end times
+        [$openHour, $openMinute] = explode(':', $operatingHoursOpen);
+        [$closeHour, $closeMinute] = explode(':', $operatingHoursClose);
+
+        $currentTime = $startOfDay->copy()->setHour((int)$openHour)->setMinute((int)$openMinute)->setSecond(0);
+
+        // Handle closing time of 00:00 as midnight (next day)
+        // This allows bookings up to 23:00-00:00 (11 PM to midnight)
+        if ($operatingHoursClose === '00:00') {
+            $endTime = $startOfDay->copy()->addDay()->setHour(0)->setMinute(0)->setSecond(0);
+        } else {
+            $endTime = $startOfDay->copy()->setHour((int)$closeHour)->setMinute((int)$closeMinute)->setSecond(0);
+        }
+
         $addedBookingIds = []; // Track which bookings we've already added
         $addedCartItemIds = []; // Track which cart items we've already added
 
