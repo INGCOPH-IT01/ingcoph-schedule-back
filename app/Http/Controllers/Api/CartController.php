@@ -337,7 +337,6 @@ class CartController extends Controller
 
         $validator = Validator::make($request->all(), [
             'payment_method' => 'required|in:pending,gcash',
-            'gcash_reference' => 'required_if:payment_method,gcash',
             'proof_of_payment' => 'required_if:payment_method,gcash',
             'selected_items' => 'nullable|array',
             'selected_items.*' => 'integer|exists:cart_items,id'
@@ -479,7 +478,6 @@ class CartController extends Controller
                 'status' => 'completed',
                 'payment_method' => $request->payment_method,
                 'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
-                'gcash_reference' => $request->gcash_reference,
                 'proof_of_payment' => $proofOfPaymentPath, // Now stores file path, not base64
                 'paid_at' => $request->payment_method === 'gcash' ? now() : null
             ]);
@@ -534,7 +532,6 @@ class CartController extends Controller
                     'status' => 'pending',
                     'payment_method' => $request->payment_method,
                     'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',
-                    'gcash_reference' => $request->gcash_reference,
                     'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
                     'paid_at' => $request->payment_method === 'gcash' ? now() : null,
                     'booking_for_user_id' => $firstCartItem->booking_for_user_id,
