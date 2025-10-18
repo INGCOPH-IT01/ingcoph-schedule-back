@@ -13,7 +13,6 @@ class Court extends Model
         'name',
         'sport_id',
         'description',
-        'location',
         'amenities',
         'is_active'
     ];

@@ -49,7 +49,6 @@ class CourtController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'location' => 'nullable|string',
             'amenities' => 'nullable|array',
             'sport_ids' => 'nullable|array',
             'sport_ids.*' => 'exists:sports,id',
@@ -144,7 +143,6 @@ class CourtController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'location' => 'nullable|string',
             'amenities' => 'nullable|array',
             'is_active' => 'boolean',
             'sport_ids' => 'nullable|array',
