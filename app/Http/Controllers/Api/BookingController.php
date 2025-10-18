@@ -140,8 +140,8 @@ class BookingController extends Controller
         if ($request->status === 'recurring_schedule') {
             $totalPrice = 0;
         } else {
-            $hours = $endTime->diffInHours($startTime);
-            $totalPrice = $court->sport->price_per_hour * $hours;
+            // Use time-based pricing calculation
+            $totalPrice = $court->sport->calculatePriceForRange($startTime, $endTime);
         }
 
         $booking = Booking::create([
@@ -569,8 +569,8 @@ class BookingController extends Controller
             });
 
             if (!$conflictingBooking && !$conflictingCartItem) {
-                // Regular available slot
-                $price = $court->sport->price_per_hour * $duration;
+                // Regular available slot - use time-based pricing
+                $price = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
                 $availableSlots[] = [
                     'start' => $currentTime->format('H:i'),
                     'end' => $slotEnd->format('H:i'),
@@ -588,7 +588,8 @@ class BookingController extends Controller
                     $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
                     $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
                     $bookingDuration = $bookingEnd->diffInHours($bookingStart);
-                    $bookingPrice = $court->sport->price_per_hour * $bookingDuration;
+                    // Use time-based pricing for existing bookings display
+                    $bookingPrice = $court->sport->calculatePriceForRange($bookingStart, $bookingEnd);
 
                     $availableSlots[] = [
                         'start' => $bookingStart->format('H:i'),
@@ -612,7 +613,8 @@ class BookingController extends Controller
                     $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time);
                     $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time);
                     $cartDuration = $cartEnd->diffInHours($cartStart);
-                    $cartPrice = $court->sport->price_per_hour * $cartDuration;
+                    // Use time-based pricing for cart items display
+                    $cartPrice = $court->sport->calculatePriceForRange($cartStart, $cartEnd);
 
                     $availableSlots[] = [
                         'start' => $cartStart->format('H:i'),

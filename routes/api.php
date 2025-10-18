@@ -52,6 +52,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/sports', [SportController::class, 'store']);
         Route::put('/sports/{id}', [SportController::class, 'update']);
         Route::delete('/sports/{id}', [SportController::class, 'destroy']);
+
+        // Time-based pricing routes
+        Route::get('/sports/{sportId}/time-based-pricing', [SportController::class, 'getTimeBasedPricing']);
+        Route::post('/sports/{sportId}/time-based-pricing', [SportController::class, 'storeTimeBasedPricing']);
+        Route::put('/sports/{sportId}/time-based-pricing/{pricingId}', [SportController::class, 'updateTimeBasedPricing']);
+        Route::delete('/sports/{sportId}/time-based-pricing/{pricingId}', [SportController::class, 'deleteTimeBasedPricing']);
     });
 
     // Court management (admin only)
