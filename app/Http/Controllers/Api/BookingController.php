@@ -65,6 +65,7 @@ class BookingController extends Controller
             'court_id' => 'required|exists:courts,id',
             'start_time' => 'required|date',
             'end_time' => 'required|date|after:start_time',
+            'number_of_players' => 'nullable|integer|min:1|max:100',
             'status' => 'nullable|string|in:pending,approved,rejected,cancelled,completed,recurring_schedule',
             'notes' => 'nullable|string',
             'recurring_schedule' => 'nullable|string',
@@ -149,6 +150,7 @@ class BookingController extends Controller
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,
             'total_price' => $totalPrice,
+            'number_of_players' => $request->number_of_players ?? 1,
             'status' => $request->status ?? 'pending',
             'notes' => $request->notes,
             'booking_for_user_id' => $request->booking_for_user_id,
@@ -817,8 +819,8 @@ class BookingController extends Controller
             $message = 'Cannot check in: ';
             if ($booking->status !== Booking::STATUS_APPROVED) {
                 $message .= 'Booking is not approved';
-            } elseif ($booking->checked_in_at) {
-                $message .= 'Already checked in';
+            } elseif ($booking->attendance_scan_count >= $booking->number_of_players) {
+                $message .= 'All players (' . $booking->number_of_players . ') have already been scanned';
             } elseif (!now()->between($booking->start_time, $booking->end_time)) {
                 $message .= 'Not within booking time window';
             }
@@ -833,12 +835,20 @@ class BookingController extends Controller
         // Check in the booking
         $oldStatus = $booking->status;
         if ($booking->checkIn()) {
-            // Broadcast status change event
-            broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
+            // Broadcast status change event if status changed
+            if ($oldStatus !== $booking->status) {
+                broadcast(new BookingStatusChanged($booking, $oldStatus, $booking->status))->toOthers();
+            }
+
+            $message = 'Successfully checked in (Player ' . $booking->attendance_scan_count . ' of ' . $booking->number_of_players . ')';
+
+            if ($booking->hasAllPlayersScanned()) {
+                $message .= ' - All players scanned!';
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Successfully checked in',
+                'message' => $message,
                 'data' => $booking
             ]);
         }
@@ -911,7 +921,8 @@ class BookingController extends Controller
     public function updateAttendanceStatus(Request $request, string $id)
     {
         $validator = Validator::make($request->all(), [
-            'attendance_status' => 'required|string|in:not_set,showed_up,no_show'
+            'attendance_status' => 'required|string|in:not_set,showed_up,no_show',
+            'players_attended' => 'nullable|integer|min:0|max:100'
         ]);
 
         if ($validator->fails()) {
@@ -931,17 +942,40 @@ class BookingController extends Controller
             ], 404);
         }
 
-        // Only admin can update attendance status
-        if (!$request->user()->isAdmin()) {
+        // Only admin/staff can update attendance status
+        if (!$request->user()->isAdmin() && !$request->user()->isStaff()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to update attendance status'
             ], 403);
         }
 
-        $booking->update([
+        // Validate players_attended doesn't exceed number_of_players
+        if ($request->has('players_attended') && $request->players_attended > $booking->number_of_players) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Players attended cannot exceed the number of players booked (' . $booking->number_of_players . ')'
+            ], 422);
+        }
+
+        $updateData = [
             'attendance_status' => $request->attendance_status
-        ]);
+        ];
+
+        // If marking as showed_up and players_attended is provided, update it
+        if ($request->attendance_status === 'showed_up' && $request->has('players_attended')) {
+            $updateData['players_attended'] = $request->players_attended;
+
+            // If not already checked in, mark as checked in
+            if (!$booking->checked_in_at) {
+                $updateData['checked_in_at'] = now();
+                $updateData['status'] = Booking::STATUS_CHECKED_IN;
+            }
+        } elseif ($request->attendance_status === 'no_show') {
+            $updateData['players_attended'] = 0;
+        }
+
+        $booking->update($updateData);
 
         return response()->json([
             'success' => true,

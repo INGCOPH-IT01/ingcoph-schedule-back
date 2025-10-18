@@ -18,6 +18,7 @@ class CartItem extends Model
         'start_time',
         'end_time',
         'price',
+        'number_of_players',
         'admin_notes',
         'status',
         'session_id'
@@ -25,7 +26,8 @@ class CartItem extends Model
 
     protected $casts = [
         'booking_date' => 'date',
-        'price' => 'decimal:2'
+        'price' => 'decimal:2',
+        'number_of_players' => 'integer'
     ];
 
     /**

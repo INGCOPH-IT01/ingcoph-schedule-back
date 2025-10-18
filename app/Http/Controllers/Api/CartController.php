@@ -92,7 +92,8 @@ class CartController extends Controller
             'items.*.booking_date' => 'required|date',
             'items.*.start_time' => 'required|date_format:H:i',
             'items.*.end_time' => 'required|date_format:H:i|after:items.*.start_time',
-            'items.*.price' => 'required|numeric|min:0'
+            'items.*.price' => 'required|numeric|min:0',
+            'items.*.number_of_players' => 'nullable|integer|min:1|max:100'
         ]);
 
         if ($validator->fails()) {
@@ -179,6 +180,7 @@ class CartController extends Controller
                     'start_time' => $item['start_time'],
                     'end_time' => $item['end_time'],
                     'price' => $item['price'],
+                    'number_of_players' => $item['number_of_players'] ?? 1,
                     'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
                     'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
                     'admin_notes' => $item['admin_notes'] ?? null
@@ -528,6 +530,7 @@ class CartController extends Controller
                     'start_time' => $group['booking_date'] . ' ' . $group['start_time'],
                     'end_time' => $group['booking_date'] . ' ' . $group['end_time'],
                     'total_price' => $group['price'],
+                    'number_of_players' => $firstCartItem->number_of_players ?? 1,
                     'status' => 'pending',
                     'payment_method' => $request->payment_method,
                     'payment_status' => $request->payment_method === 'gcash' ? 'paid' : 'unpaid',

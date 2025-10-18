@@ -17,6 +17,7 @@ class Booking extends Model
         'start_time',
         'end_time',
         'total_price',
+        'number_of_players',
         'status',
         'notes',
         'admin_notes',
@@ -34,11 +35,16 @@ class Booking extends Model
         'proof_of_payment',
         'qr_code',
         'checked_in_at',
-        'attendance_status'
+        'attendance_status',
+        'attendance_scan_count',
+        'players_attended'
     ];
 
     protected $casts = [
         'total_price' => 'decimal:2',
+        'number_of_players' => 'integer',
+        'attendance_scan_count' => 'integer',
+        'players_attended' => 'integer',
         'recurring_schedule_data' => 'array',
         'frequency_days' => 'array',
         'frequency_times' => 'array',
@@ -112,9 +118,16 @@ class Booking extends Model
      */
     public function canCheckIn(): bool
     {
-        return $this->status === self::STATUS_APPROVED &&
-               !$this->checked_in_at &&
-               now()->between($this->start_time, $this->end_time);
+        // Check if booking is approved and within time window
+        $basicCheck = $this->status === self::STATUS_APPROVED &&
+                     now()->between($this->start_time, $this->end_time);
+
+        // If basic check passes, also verify scan count hasn't exceeded number of players
+        if ($basicCheck) {
+            return $this->attendance_scan_count < $this->number_of_players;
+        }
+
+        return false;
     }
 
     /**
@@ -123,12 +136,27 @@ class Booking extends Model
     public function checkIn(): bool
     {
         if ($this->canCheckIn()) {
-            $this->status = self::STATUS_CHECKED_IN;
-            $this->checked_in_at = now();
-            $this->attendance_status = 'showed_up';
+            // Increment the scan count
+            $this->attendance_scan_count += 1;
+
+            // If this is the first scan, update checked_in_at and status
+            if ($this->attendance_scan_count === 1) {
+                $this->status = self::STATUS_CHECKED_IN;
+                $this->checked_in_at = now();
+                $this->attendance_status = 'showed_up';
+            }
+
             return $this->save();
         }
         return false;
+    }
+
+    /**
+     * Check if all players have been scanned
+     */
+    public function hasAllPlayersScanned(): bool
+    {
+        return $this->attendance_scan_count >= $this->number_of_players;
     }
 
     /**
