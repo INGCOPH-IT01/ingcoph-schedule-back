@@ -313,9 +313,12 @@
                 <strong>⚠️ Important Reminders:</strong>
                 <p>
                     • Please arrive at least 10 minutes before your scheduled time<br>
+                    • Late arrival will not adjust the booking duration<br>
+                    • Please bring your ID or proof of booking with you<br>
                     • Make sure your phone is charged to display the QR code<br>
                     • The QR code is unique to your booking and should not be shared<br>
-                    • Present the QR code at the court reception/entrance
+                    • Present the QR code at the court reception/entrance<br>
+                    • Payment is non-refundable
                 </p>
             </div>
 

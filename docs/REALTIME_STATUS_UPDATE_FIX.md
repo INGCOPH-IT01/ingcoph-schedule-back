@@ -99,7 +99,7 @@ if (transactionIndex !== -1) {
 ```bash
 1. Logout (if already logged in)
 2. Login with user credentials
-3. Create a new booking (add to cart and checkout)
+3. Create a new booking (add to booking and checkout)
 4. Keep the Bookings page open
 ```
 
@@ -229,4 +229,3 @@ All three scenarios now trigger real-time WebSocket broadcasts! 🎉
 ## Performance Note
 
 The immediate list update provides a smooth user experience while the background `fetchBookings()` ensures data consistency. This is a "optimistic update" pattern commonly used in real-time applications.
-
