@@ -91,7 +91,7 @@ class CartController extends Controller
             'items.*.court_id' => 'required|exists:courts,id',
             'items.*.booking_date' => 'required|date',
             'items.*.start_time' => 'required|date_format:H:i',
-            'items.*.end_time' => 'required|date_format:H:i|after:items.*.start_time',
+            'items.*.end_time' => 'required|date_format:H:i',  // Removed after validation to allow midnight crossing
             'items.*.price' => 'required|numeric|min:0',
             'items.*.number_of_players' => 'nullable|integer|min:1|max:100'
         ]);
@@ -137,8 +137,20 @@ class CartController extends Controller
                 }
 
                 // Check if time slot is still available
+                // Handle midnight crossing: if end_time < start_time, it means next day
                 $startDateTime = $item['booking_date'] . ' ' . $item['start_time'];
-                $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
+
+                // Check if slot crosses midnight (end time is before or equal to start time)
+                $startTime = \Carbon\Carbon::parse($item['start_time']);
+                $endTime = \Carbon\Carbon::parse($item['end_time']);
+
+                if ($endTime->lte($startTime)) {
+                    // Slot crosses midnight, so end time is on the next day
+                    $endDate = \Carbon\Carbon::parse($item['booking_date'])->addDay()->format('Y-m-d');
+                    $endDateTime = $endDate . ' ' . $item['end_time'];
+                } else {
+                    $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
+                }
 
                 $isBooked = Booking::where('court_id', $item['court_id'])
                     ->whereDate('start_time', $item['booking_date'])
@@ -487,11 +499,23 @@ class CartController extends Controller
             // Create bookings from grouped items
             $createdBookings = [];
             foreach ($groupedBookings as $group) {
+                // Handle midnight crossing when creating datetime strings
+                $startDateTime = $group['booking_date'] . ' ' . $group['start_time'];
+
+                $startTime = \Carbon\Carbon::parse($group['start_time']);
+                $endTime = \Carbon\Carbon::parse($group['end_time']);
+
+                if ($endTime->lte($startTime)) {
+                    // Slot crosses midnight
+                    $endDate = \Carbon\Carbon::parse($group['booking_date'])->addDay()->format('Y-m-d');
+                    $endDateTime = $endDate . ' ' . $group['end_time'];
+                } else {
+                    $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
+                }
+
                 // Final availability check
                 $isBooked = Booking::where('court_id', $group['court_id'])
-                    ->where(function ($query) use ($group) {
-                        $startDateTime = $group['booking_date'] . ' ' . $group['start_time'];
-                        $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
+                    ->where(function ($query) use ($startDateTime, $endDateTime) {
 
                         $query->where(function ($q) use ($startDateTime, $endDateTime) {
                             // Existing booking starts during new booking (exclusive boundaries)
@@ -525,8 +549,8 @@ class CartController extends Controller
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
                     'court_id' => $group['court_id'],
-                    'start_time' => $group['booking_date'] . ' ' . $group['start_time'],
-                    'end_time' => $group['booking_date'] . ' ' . $group['end_time'],
+                    'start_time' => $startDateTime,  // Use adjusted datetime that handles midnight crossing
+                    'end_time' => $endDateTime,  // Use adjusted datetime that handles midnight crossing
                     'total_price' => $group['price'],
                     'number_of_players' => $firstCartItem->number_of_players ?? 1,
                     'status' => 'pending',
