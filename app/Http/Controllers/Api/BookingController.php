@@ -573,19 +573,30 @@ class BookingController extends Controller
 
         // Get all pending and completed cart items for this court on the specified date
         // Exclude pending cart items that are older than 1 hour (unpaid)
+        // BUT: Always include pending cart items created by admin users (even if no payment proof yet)
         $oneHourAgo = Carbon::now()->subHour();
 
-        $cartItems = \App\Models\CartItem::with('cartTransaction')
+        $cartItems = \App\Models\CartItem::with('cartTransaction.user')
             ->where('court_id', $courtId)
             ->where('booking_date', $date->format('Y-m-d'))
             ->where(function($query) use ($oneHourAgo) {
                 // Include completed (paid) cart items regardless of age
                 $query->where('status', 'completed')
-                    // Include pending cart items only if they are less than 1 hour old
+                    // Include pending cart items created by admin users (regardless of age)
+                    ->orWhere(function($subQuery) {
+                        $subQuery->where('status', 'pending')
+                            ->whereHas('cartTransaction.user', function($userQuery) {
+                                $userQuery->where('role', 'admin');
+                            });
+                    })
+                    // Include pending cart items only if they are less than 1 hour old (for non-admin users)
                     ->orWhere(function($subQuery) use ($oneHourAgo) {
                         $subQuery->where('status', 'pending')
                             ->whereHas('cartTransaction', function($transQuery) use ($oneHourAgo) {
-                                $transQuery->where('created_at', '>=', $oneHourAgo);
+                                $transQuery->where('created_at', '>=', $oneHourAgo)
+                                    ->whereHas('user', function($userQuery) {
+                                        $userQuery->where('role', '!=', 'admin');
+                                    });
                             });
                     });
             })
