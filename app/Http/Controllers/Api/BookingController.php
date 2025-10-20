@@ -215,8 +215,12 @@ class BookingController extends Controller
             ], 404);
         }
 
-        // Check if user owns this booking or is admin
-        if ($booking->user_id !== $request->user()->id && !$request->user()->isAdmin()) {
+        // Check if user owns this booking, is the booking_for_user, or is admin
+        $isBookingOwner = $booking->user_id === $request->user()->id;
+        $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
+        $isAdmin = $request->user()->isAdmin();
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to update this booking'
@@ -336,8 +340,12 @@ class BookingController extends Controller
             ], 404);
         }
 
-        // Check if user owns this booking or is admin
-        if ($booking->user_id !== $request->user()->id && $request->user()->role !== 'admin') {
+        // Check if user owns this booking, is the booking_for_user, or is admin
+        $isBookingOwner = $booking->user_id === $request->user()->id;
+        $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
+        $isAdmin = $request->user()->role === 'admin';
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to upload proof for this booking'
@@ -449,11 +457,14 @@ class BookingController extends Controller
         }
 
         // Check if user is authorized to view this proof
-        // Only the booking owner, admin, or staff can view
+        // Only the booking owner, booking_for_user, admin, or staff can view
         $user = $request->user();
-        if ($user->id !== $booking->user_id &&
-            $user->role !== 'admin' &&
-            $user->role !== 'staff') {
+        $isBookingOwner = $user->id === $booking->user_id;
+        $isBookingForUser = $user->id === $booking->booking_for_user_id;
+        $isAdmin = $user->role === 'admin';
+        $isStaff = $user->role === 'staff';
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin && !$isStaff) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to view this proof of payment'
@@ -977,8 +988,12 @@ class BookingController extends Controller
             ], 404);
         }
 
-        // Check if user owns this booking or is admin
-        if ($booking->user_id !== $request->user()->id && !$request->user()->isAdmin()) {
+        // Check if user owns this booking, is the booking_for_user, or is admin
+        $isBookingOwner = $booking->user_id === $request->user()->id;
+        $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
+        $isAdmin = $request->user()->isAdmin();
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to access this booking'

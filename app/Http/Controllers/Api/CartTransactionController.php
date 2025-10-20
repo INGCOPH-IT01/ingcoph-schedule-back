@@ -17,8 +17,16 @@ class CartTransactionController extends Controller
      */
     public function index(Request $request)
     {
+        $userId = $request->user()->id;
+
+        // Get transactions where user is either the owner OR the booking_for_user in any cart item
         $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
-            ->where('user_id', $request->user()->id)
+            ->where(function($query) use ($userId) {
+                $query->where('user_id', $userId)
+                      ->orWhereHas('cartItems', function($q) use ($userId) {
+                          $q->where('booking_for_user_id', $userId);
+                      });
+            })
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
             ->get();
@@ -47,9 +55,12 @@ class CartTransactionController extends Controller
         $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
             ->findOrFail($id);
 
-        // Check if user owns this transaction or is admin/staff
-        if ($transaction->user_id !== $request->user()->id &&
-            !in_array($request->user()->role, ['admin', 'staff'])) {
+        // Check if user owns this transaction, is the booking_for_user in any cart item, or is admin/staff
+        $isOwner = $transaction->user_id === $request->user()->id;
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)->exists();
+        $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
+
+        if (!$isOwner && !$isBookingForUser && !$isAdminOrStaff) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -381,7 +392,7 @@ class CartTransactionController extends Controller
      */
     public function getProofOfPayment(Request $request, $id)
     {
-        $transaction = CartTransaction::find($id);
+        $transaction = CartTransaction::with('cartItems')->find($id);
 
         if (!$transaction) {
             return response()->json([
@@ -391,11 +402,14 @@ class CartTransactionController extends Controller
         }
 
         // Check if user is authorized to view this proof
-        // Only the transaction owner, admin, or staff can view
+        // Only the transaction owner, booking_for_user in any cart item, admin, or staff can view
         $user = $request->user();
-        if ($user->id !== $transaction->user_id &&
-            $user->role !== 'admin' &&
-            $user->role !== 'staff') {
+        $isOwner = $user->id === $transaction->user_id;
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $user->id)->exists();
+        $isAdmin = $user->role === 'admin';
+        $isStaff = $user->role === 'staff';
+
+        if (!$isOwner && !$isBookingForUser && !$isAdmin && !$isStaff) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to view this proof of payment'
