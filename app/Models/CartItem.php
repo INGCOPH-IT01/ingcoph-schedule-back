@@ -20,6 +20,7 @@ class CartItem extends Model
         'end_time',
         'price',
         'number_of_players',
+        'notes',
         'admin_notes',
         'status',
         'session_id'

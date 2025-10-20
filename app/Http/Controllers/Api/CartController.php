@@ -336,6 +336,7 @@ class CartController extends Controller
                     'end_time' => $item['end_time'],
                     'price' => $item['price'],
                     'number_of_players' => $item['number_of_players'] ?? 1,
+                    'notes' => $item['notes'] ?? null,
                     'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
                     'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
                     'admin_notes' => $item['admin_notes'] ?? null
@@ -722,6 +723,7 @@ class CartController extends Controller
                     'total_price' => $group['price'],
                     'number_of_players' => $firstCartItem->number_of_players ?? 1,
                     'status' => 'pending',
+                    'notes' => $firstCartItem->notes,
                     'payment_method' => $paymentMethod,
                     'payment_status' => $paymentStatus,
                     'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
