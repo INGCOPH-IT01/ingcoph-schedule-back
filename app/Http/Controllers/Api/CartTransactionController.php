@@ -31,7 +31,7 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'cartItems.bookingForUser', 'bookings', 'approver'])
             ->whereIn('status', ['pending', 'completed'])
             ->orderBy('created_at', 'asc')
             ->get();
