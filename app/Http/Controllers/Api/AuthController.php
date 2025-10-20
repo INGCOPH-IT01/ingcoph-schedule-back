@@ -14,7 +14,8 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'required|string|max:20',
@@ -29,7 +30,8 @@ class AuthController extends Controller
         }
 
         $user = User::create([
-            'name' => $request->name,
+            'first_name' => $request->first_name,
+            'last_name' => $request->last_name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'phone' => $request->phone,
@@ -78,8 +80,12 @@ class AuthController extends Controller
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
                 'email' => $user->email,
+                'phone' => $user->phone,
                 'role' => $user->role,
+                'created_at' => $user->created_at,
             ],
             'token' => $token,
             'token_type' => 'Bearer',
@@ -104,9 +110,12 @@ class AuthController extends Controller
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'role' => $user->role,
+                'created_at' => $user->created_at,
             ],
         ]);
     }
@@ -116,7 +125,8 @@ class AuthController extends Controller
         $user = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|required|string|max:255',
+            'first_name' => 'sometimes|required|string|max:255',
+            'last_name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|string|email|max:255|unique:users,email,' . $user->id,
             'phone' => 'sometimes|required|string|max:20',
             'current_password' => 'required_with:password|string',
@@ -144,8 +154,12 @@ class AuthController extends Controller
         try {
             $updateData = [];
 
-            if ($request->has('name')) {
-                $updateData['name'] = $request->name;
+            if ($request->has('first_name')) {
+                $updateData['first_name'] = $request->first_name;
+            }
+
+            if ($request->has('last_name')) {
+                $updateData['last_name'] = $request->last_name;
             }
 
             if ($request->has('email')) {
@@ -168,9 +182,12 @@ class AuthController extends Controller
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
+                    'first_name' => $user->first_name,
+                    'last_name' => $user->last_name,
                     'email' => $user->email,
                     'phone' => $user->phone,
                     'role' => $user->role,
+                    'created_at' => $user->created_at,
                 ],
             ]);
         } catch (\Exception $e) {

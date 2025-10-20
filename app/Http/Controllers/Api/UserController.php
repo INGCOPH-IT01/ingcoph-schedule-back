@@ -19,11 +19,11 @@ class UserController extends Controller
         try {
             Log::info('Fetching users - Request by user ID: ' . ($request->user() ? $request->user()->id : 'none'));
             Log::info('User role: ' . ($request->user() ? $request->user()->role : 'none'));
-            
+
             $users = User::orderBy('created_at', 'desc')->get();
-            
+
             Log::info('Successfully fetched ' . $users->count() . ' users');
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $users
@@ -44,7 +44,8 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
             'user_type' => 'required|in:user,staff,admin',
@@ -61,7 +62,8 @@ class UserController extends Controller
 
         try {
             $user = User::create([
-                'name' => $request->name,
+                'first_name' => $request->first_name,
+                'last_name' => $request->last_name,
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
                 'role' => $request->user_type,
@@ -91,7 +93,7 @@ class UserController extends Controller
     {
         try {
             $user = User::findOrFail($id);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $user
@@ -112,7 +114,8 @@ class UserController extends Controller
         $user = User::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|required|string|max:255',
+            'first_name' => 'sometimes|required|string|max:255',
+            'last_name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|string|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:8|confirmed',
             'user_type' => 'sometimes|required|in:user,staff,admin',
@@ -129,23 +132,27 @@ class UserController extends Controller
 
         try {
             $updateData = [];
-            
-            if ($request->has('name')) {
-                $updateData['name'] = $request->name;
+
+            if ($request->has('first_name')) {
+                $updateData['first_name'] = $request->first_name;
             }
-            
+
+            if ($request->has('last_name')) {
+                $updateData['last_name'] = $request->last_name;
+            }
+
             if ($request->has('email')) {
                 $updateData['email'] = $request->email;
             }
-            
+
             if ($request->has('password') && $request->password) {
                 $updateData['password'] = Hash::make($request->password);
             }
-            
+
             if ($request->has('user_type')) {
                 $updateData['role'] = $request->user_type;
             }
-            
+
             if ($request->has('phone')) {
                 $updateData['phone'] = $request->phone;
             }
@@ -175,7 +182,7 @@ class UserController extends Controller
     {
         try {
             $user = User::findOrFail($id);
-            
+
             // Prevent deleting yourself
             $currentUser = $request->user();
             if ($currentUser && $currentUser->id === $user->id) {
@@ -186,7 +193,7 @@ class UserController extends Controller
             }
 
             Log::info('User deleted by admin: ' . $user->id . ' - ' . $user->email);
-            
+
             $user->delete();
 
             return response()->json([
@@ -210,9 +217,9 @@ class UserController extends Controller
         try {
             $stats = [
                 'total' => User::count(),
-                'users' => User::where('user_type', 'user')->count(),
-                'staff' => User::where('user_type', 'staff')->count(),
-                'admins' => User::where('user_type', 'admin')->count(),
+                'users' => User::where('role', 'user')->count(),
+                'staff' => User::where('role', 'staff')->count(),
+                'admins' => User::where('role', 'admin')->count(),
             ];
 
             return response()->json([
