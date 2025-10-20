@@ -41,10 +41,23 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'cartItems.bookingForUser', 'bookings', 'approver'])
-            ->whereIn('status', ['pending', 'completed'])
-            ->orderBy('created_at', 'asc')
-            ->get();
+        $query = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'cartItems.bookingForUser', 'bookings', 'approver'])
+            ->whereIn('status', ['pending', 'completed']);
+
+        // Filter by booking date range if provided
+        if ($request->filled('date_from')) {
+            $query->whereHas('cartItems', function($q) use ($request) {
+                $q->where('booking_date', '>=', $request->date_from);
+            });
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereHas('cartItems', function($q) use ($request) {
+                $q->where('booking_date', '<=', $request->date_to);
+            });
+        }
+
+        $transactions = $query->orderBy('created_at', 'asc')->get();
 
         return response()->json($transactions);
     }
