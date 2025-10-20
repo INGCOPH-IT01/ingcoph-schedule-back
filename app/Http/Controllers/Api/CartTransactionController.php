@@ -481,6 +481,14 @@ class CartTransactionController extends Controller
             ], 403);
         }
 
+        // Disallow uploads for rejected transactions
+        if ($transaction->approval_status === 'rejected') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot upload proof of payment for a rejected transaction'
+            ], 422);
+        }
+
         try {
             // Store the uploaded file
             $file = $request->file('proof_of_payment');

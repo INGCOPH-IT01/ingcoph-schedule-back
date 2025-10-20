@@ -215,6 +215,14 @@ class BookingController extends Controller
             ], 404);
         }
 
+        // Disallow uploads for rejected bookings
+        if ($booking->status === 'rejected') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot upload proof of payment for a rejected booking'
+            ], 422);
+        }
+
         // Check if user owns this booking, is the booking_for_user, or is admin
         $isBookingOwner = $booking->user_id === $request->user()->id;
         $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
