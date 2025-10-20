@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartTransaction;
+use App\Models\BookingWaitlist;
 use App\Mail\BookingApproved;
+use App\Mail\WaitlistNotificationMail;
 use App\Events\BookingStatusChanged;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -157,6 +159,9 @@ class CartTransactionController extends Controller
             Log::error('Failed to send approval email: ' . $e->getMessage());
         }
 
+        // Notify waitlist users - transaction approved, slots are confirmed
+        // No action needed for waitlist as the slot is now taken
+
         return response()->json([
             'message' => 'Transaction approved successfully and notification email sent',
             'transaction' => $transaction->load(['approver', 'bookings'])
@@ -203,10 +208,73 @@ class CartTransactionController extends Controller
             'reason' => $request->reason
         ]);
 
+        // Notify waitlist users - transaction rejected, slots are now available
+        try {
+            $this->notifyWaitlistUsers($transaction, 'rejected');
+        } catch (\Exception $e) {
+            Log::error('Failed to notify waitlist users: ' . $e->getMessage());
+        }
+
         return response()->json([
             'message' => 'Transaction rejected',
             'transaction' => $transaction->load(['approver', 'bookings'])
         ]);
+    }
+
+    /**
+     * Notify waitlist users when a transaction is rejected
+     * This makes the time slots available to waitlisted users
+     */
+    private function notifyWaitlistUsers(CartTransaction $transaction, string $notificationType = 'rejected')
+    {
+        // Get all cart items from this transaction
+        $cartItems = $transaction->cartItems()->where('status', '!=', 'cancelled')->get();
+
+        foreach ($cartItems as $cartItem) {
+            // Create datetime strings for the cart item
+            $startDateTime = $cartItem->booking_date . ' ' . $cartItem->start_time;
+            $endDateTime = $cartItem->booking_date . ' ' . $cartItem->end_time;
+
+            // Find pending waitlist entries for this time slot
+            $waitlistEntries = BookingWaitlist::where('court_id', $cartItem->court_id)
+                ->where('start_time', $startDateTime)
+                ->where('end_time', $endDateTime)
+                ->where('status', BookingWaitlist::STATUS_PENDING)
+                ->orderBy('position')
+                ->orderBy('created_at')
+                ->get();
+
+            Log::info('Found ' . $waitlistEntries->count() . ' waitlist entries for court ' . $cartItem->court_id);
+
+            // Notify each waitlist user
+            foreach ($waitlistEntries as $waitlistEntry) {
+                try {
+                    // Load relationships for email
+                    $waitlistEntry->load(['user', 'court', 'sport']);
+
+                    // Send notification email and start expiration timer (1 hour by default)
+                    $waitlistEntry->sendNotification(1);
+
+                    // Send email
+                    if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                        Mail::to($waitlistEntry->user->email)
+                            ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
+
+                        Log::info('Waitlist notification email sent', [
+                            'waitlist_id' => $waitlistEntry->id,
+                            'user_id' => $waitlistEntry->user_id,
+                            'user_email' => $waitlistEntry->user->email,
+                            'notification_type' => $notificationType
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to notify waitlist user', [
+                        'waitlist_id' => $waitlistEntry->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+        }
     }
 
     /**
@@ -385,6 +453,85 @@ class CartTransactionController extends Controller
             'message' => 'Attendance status updated successfully',
             'transaction' => $transaction->load(['user', 'cartItems.court.sport', 'cartItems.sport'])
         ]);
+    }
+
+    /**
+     * Upload proof of payment for a cart transaction
+     */
+    public function uploadProofOfPayment(Request $request, $id)
+    {
+        $request->validate([
+            'proof_of_payment' => 'required|image|max:5120', // 5MB max
+            'payment_method' => 'required|string|in:gcash,cash'
+        ]);
+
+        $transaction = CartTransaction::with(['bookings'])->findOrFail($id);
+
+        // Check if user is authorized to upload proof
+        // Only the transaction owner, booking_for_user, admin, or staff can upload
+        $user = $request->user();
+        $isOwner = $user->id === $transaction->user_id;
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $user->id)->exists();
+        $isAdminOrStaff = in_array($user->role, ['admin', 'staff']);
+
+        if (!$isOwner && !$isBookingForUser && !$isAdminOrStaff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to upload proof of payment for this transaction'
+            ], 403);
+        }
+
+        try {
+            // Store the uploaded file
+            $file = $request->file('proof_of_payment');
+            $filename = 'proof_txn_' . $transaction->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('proofs', $filename, 'public');
+
+            // Update transaction with proof of payment
+            $transaction->update([
+                'proof_of_payment' => $path,
+                'payment_method' => $request->payment_method,
+                'payment_status' => 'paid',
+                'paid_at' => now()
+            ]);
+
+            // Update all associated bookings
+            $transaction->bookings()->update([
+                'proof_of_payment' => $path,
+                'payment_method' => $request->payment_method,
+                'payment_status' => 'paid',
+                'paid_at' => now()
+            ]);
+
+            Log::info('Proof of payment uploaded for cart transaction', [
+                'transaction_id' => $transaction->id,
+                'uploaded_by' => $user->id,
+                'payment_method' => $request->payment_method
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Proof of payment uploaded successfully',
+                'data' => [
+                    'proof_of_payment' => $path,
+                    'payment_method' => $request->payment_method,
+                    'payment_status' => 'paid',
+                    'paid_at' => now()->toDateTimeString()
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to upload proof of payment for cart transaction', [
+                'transaction_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload proof of payment: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

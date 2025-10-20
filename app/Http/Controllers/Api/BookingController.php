@@ -576,27 +576,38 @@ class BookingController extends Controller
         // BUT: Always include pending cart items created by admin users (even if no payment proof yet)
         $oneHourAgo = Carbon::now()->subHour();
 
+        // Get cart items with various statuses
+        // Include BOTH paid and unpaid pending items to show waitlist status
         $cartItems = \App\Models\CartItem::with('cartTransaction.user')
             ->where('court_id', $courtId)
             ->where('booking_date', $date->format('Y-m-d'))
-            ->where(function($query) use ($oneHourAgo) {
-                // Include completed (paid) cart items regardless of age
-                $query->where('status', 'completed')
-                    // Include pending cart items created by admin users (regardless of age)
-                    ->orWhere(function($subQuery) {
-                        $subQuery->where('status', 'pending')
-                            ->whereHas('cartTransaction.user', function($userQuery) {
-                                $userQuery->where('role', 'admin');
+            ->where('status', '!=', 'cancelled') // Exclude cancelled items
+            ->whereHas('cartTransaction', function($transQuery) use ($oneHourAgo) {
+                // Include approved transactions (definitely booked, must be paid)
+                $transQuery->where(function($approvedQuery) {
+                        $approvedQuery->where('approval_status', 'approved')
+                            ->where('payment_status', 'paid');
+                    })
+                    // OR include pending approval with payment (paid, waiting approval - waitlist available)
+                    ->orWhere(function($paidPendingQuery) use ($oneHourAgo) {
+                        $paidPendingQuery->where('approval_status', 'pending')
+                            ->where('payment_status', 'paid')
+                            ->where(function($timeQuery) use ($oneHourAgo) {
+                                $timeQuery->whereHas('user', function($userQuery) {
+                                        $userQuery->where('role', 'admin');
+                                    })
+                                    ->orWhere('created_at', '>=', $oneHourAgo);
                             });
                     })
-                    // Include pending cart items only if they are less than 1 hour old (for non-admin users)
-                    ->orWhere(function($subQuery) use ($oneHourAgo) {
-                        $subQuery->where('status', 'pending')
-                            ->whereHas('cartTransaction', function($transQuery) use ($oneHourAgo) {
-                                $transQuery->where('created_at', '>=', $oneHourAgo)
-                                    ->whereHas('user', function($userQuery) {
-                                        $userQuery->where('role', '!=', 'admin');
-                                    });
+                    // OR include pending approval WITHOUT payment (unpaid - also waitlist available)
+                    ->orWhere(function($unpaidPendingQuery) use ($oneHourAgo) {
+                        $unpaidPendingQuery->where('approval_status', 'pending')
+                            ->where('payment_status', 'unpaid')
+                            ->where(function($timeQuery) use ($oneHourAgo) {
+                                $timeQuery->whereHas('user', function($userQuery) {
+                                        $userQuery->where('role', 'admin');
+                                    })
+                                    ->orWhere('created_at', '>=', $oneHourAgo);
                             });
                     });
             })
@@ -674,6 +685,30 @@ class BookingController extends Controller
                     // Use time-based pricing for cart items display
                     $cartPrice = $court->sport->calculatePriceForRange($cartStart, $cartEnd);
 
+                    // Check approval status and payment status
+                    $approvalStatus = $conflictingCartItem->cartTransaction->approval_status ?? 'pending';
+                    $paymentStatus = $conflictingCartItem->cartTransaction->payment_status ?? 'unpaid';
+                    $isApproved = $approvalStatus === 'approved';
+                    $isPaid = $paymentStatus === 'paid';
+
+                    // Determine the display type and status
+                    $displayType = 'waitlist_available'; // Default for pending
+                    $displayStatus = 'pending_approval';
+
+                    if ($isApproved && $isPaid) {
+                        // Approved and paid = Truly booked
+                        $displayType = 'booked';
+                        $displayStatus = 'approved';
+                    } elseif (!$isApproved && $isPaid) {
+                        // Pending but paid = Pending approval (paid waitlist)
+                        $displayType = 'pending_approval';
+                        $displayStatus = 'pending_approval';
+                    } elseif (!$isApproved && !$isPaid) {
+                        // Pending and unpaid = Waitlist available (unpaid)
+                        $displayType = 'waitlist_available';
+                        $displayStatus = 'waitlist_available';
+                    }
+
                     $availableSlots[] = [
                         'start' => $cartStart->format('H:i'),
                         'end' => $cartEnd->format('H:i'),
@@ -683,10 +718,15 @@ class BookingController extends Controller
                         'duration_hours' => $cartDuration,
                         'price' => $cartPrice,
                         'available' => false,
-                        'is_booked' => true,
+                        'is_booked' => $isApproved && $isPaid, // Only true if approved AND paid
+                        'is_pending_approval' => !$isApproved && $isPaid, // Paid but pending
+                        'is_waitlist_available' => !($isApproved && $isPaid), // False only when fully booked (approved AND paid)
+                        'is_unpaid' => !$isPaid, // Flag for unpaid bookings
                         'cart_item_id' => $conflictingCartItem->id,
-                        'type' => $conflictingCartItem->status === 'completed' ? 'paid' : 'in_cart',
-                        'status' => $conflictingCartItem->status
+                        'type' => $displayType,
+                        'status' => $displayStatus,
+                        'approval_status' => $approvalStatus,
+                        'payment_status' => $paymentStatus
                     ];
 
                     $addedCartItemIds[] = $conflictingCartItem->id;
@@ -698,6 +738,20 @@ class BookingController extends Controller
                     // Use time-based pricing for existing bookings display
                     $bookingPrice = $court->sport->calculatePriceForRange($bookingStart, $bookingEnd);
 
+                    // Check booking status and payment status
+                    $bookingStatus = $conflictingBooking->status ?? 'pending';
+                    $bookingPaymentStatus = $conflictingBooking->payment_status ?? 'unpaid';
+                    $isBookingApproved = $bookingStatus === 'approved';
+                    $isBookingPaid = $bookingPaymentStatus === 'paid';
+
+                    // Determine display type
+                    $bookingDisplayType = 'waitlist_available';
+                    if ($isBookingApproved && $isBookingPaid) {
+                        $bookingDisplayType = 'booking';
+                    } elseif (!$isBookingApproved && $isBookingPaid) {
+                        $bookingDisplayType = 'pending_approval';
+                    }
+
                     $availableSlots[] = [
                         'start' => $bookingStart->format('H:i'),
                         'end' => $bookingEnd->format('H:i'),
@@ -707,9 +761,14 @@ class BookingController extends Controller
                         'duration_hours' => $bookingDuration,
                         'price' => $bookingPrice,
                         'available' => false,
-                        'is_booked' => true,
+                        'is_booked' => $isBookingApproved && $isBookingPaid,
+                        'is_pending_approval' => !$isBookingApproved && $isBookingPaid,
+                        'is_waitlist_available' => !($isBookingApproved && $isBookingPaid), // False only when fully booked
+                        'is_unpaid' => !$isBookingPaid,
                         'booking_id' => $conflictingBooking->id,
-                        'type' => 'booking'
+                        'type' => $bookingDisplayType,
+                        'status' => $bookingStatus,
+                        'payment_status' => $bookingPaymentStatus
                     ];
 
                     $addedBookingIds[] = $conflictingBooking->id;

@@ -162,6 +162,12 @@ class CourtController extends Controller
 
         $updateData = $request->except('sport_ids');
 
+        // If multiple sport IDs are provided, set the primary sport_id to the first one
+        if ($request->has('sport_ids') && is_array($request->sport_ids) && count($request->sport_ids) > 0) {
+            $firstSportId = (int) $request->sport_ids[0];
+            $updateData['sport_id'] = $firstSportId;
+        }
+
         if($request->has('trashImages')) {
             foreach ($request->trashImages as $trashImage) {
                 $courtImage = CourtImage::where('id', $trashImage['id'])->first();

@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
     Route::get('/cart-transactions/{id}', [CartTransactionController::class, 'show']);
     Route::get('/cart-transactions/{id}/proof-of-payment', [CartTransactionController::class, 'getProofOfPayment']);
+    Route::post('/cart-transactions/{id}/upload-proof', [CartTransactionController::class, 'uploadProofOfPayment']);
     Route::delete('/cart-transactions/{id}', [CartTransactionController::class, 'destroy']);
 
     // Booking routes
