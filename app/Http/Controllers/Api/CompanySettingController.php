@@ -98,6 +98,14 @@ class CompanySettingController extends Controller
                 $settings['contact_email'] = '';
             }
 
+            // Social media settings
+            if (!isset($settings['facebook_page_url'])) {
+                $settings['facebook_page_url'] = '';
+            }
+            if (!isset($settings['facebook_page_name'])) {
+                $settings['facebook_page_name'] = '';
+            }
+
             // Operating hours settings
             if (!isset($settings['operating_hours_opening'])) {
                 $settings['operating_hours_opening'] = '08:00';
@@ -190,6 +198,9 @@ class CompanySettingController extends Controller
             'contact_viber' => 'nullable|string|max:100',
             'contact_mobile' => 'nullable|string|max:50',
             'contact_email' => 'nullable|email|max:255',
+            // Social media
+            'facebook_page_url' => 'nullable|string|max:500',
+            'facebook_page_name' => 'nullable|string|max:255',
             // Operating hours
             'operating_hours_opening' => 'nullable|string|max:5',
             'operating_hours_closing' => 'nullable|string|max:5',
@@ -326,6 +337,14 @@ class CompanySettingController extends Controller
                 CompanySetting::set('contact_email', $request->contact_email);
             }
 
+            // Save social media information
+            if ($request->has('facebook_page_url')) {
+                CompanySetting::set('facebook_page_url', $request->facebook_page_url);
+            }
+            if ($request->has('facebook_page_name')) {
+                CompanySetting::set('facebook_page_name', $request->facebook_page_name);
+            }
+
             // Save operating hours
             if ($request->has('operating_hours_opening')) {
                 CompanySetting::set('operating_hours_opening', $request->operating_hours_opening);
@@ -373,6 +392,8 @@ class CompanySettingController extends Controller
                 'contact_viber' => CompanySetting::get('contact_viber', ''),
                 'contact_mobile' => CompanySetting::get('contact_mobile', ''),
                 'contact_email' => CompanySetting::get('contact_email', ''),
+                'facebook_page_url' => CompanySetting::get('facebook_page_url', ''),
+                'facebook_page_name' => CompanySetting::get('facebook_page_name', ''),
                 'operating_hours_opening' => CompanySetting::get('operating_hours_opening', '08:00'),
                 'operating_hours_closing' => CompanySetting::get('operating_hours_closing', '22:00'),
                 'operating_hours_enabled' => CompanySetting::get('operating_hours_enabled', '1') === '1',

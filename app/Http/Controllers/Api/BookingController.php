@@ -86,6 +86,23 @@ class BookingController extends Controller
             ], 422);
         }
 
+        // Check if user role is 'user' and booking is within current month only
+        if ($request->user()->isUser()) {
+            $bookingDate = Carbon::parse($request->start_time);
+            $currentMonthStart = Carbon::now()->startOfMonth();
+            $currentMonthEnd = Carbon::now()->endOfMonth();
+
+            if ($bookingDate->lt($currentMonthStart) || $bookingDate->gt($currentMonthEnd)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Regular users can only book time slots within the current month (' . $currentMonthStart->format('F Y') . ')',
+                    'errors' => [
+                        'start_time' => ['Booking date must be within the current month']
+                    ]
+                ], 422);
+            }
+        }
+
         // Get the selected court
         $court = \App\Models\Court::find($request->court_id);
 
