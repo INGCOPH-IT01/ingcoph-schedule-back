@@ -212,7 +212,14 @@ class CartTransactionController extends Controller
             broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
         }
 
-        // Send email notification to user
+        // Send email notification to user (with debug logging)
+        $emailDebug = [
+            'attempted' => false,
+            'sent' => false,
+            'recipient' => null,
+            'error' => null,
+        ];
+
         try {
             // Reload transaction with full relationships for email
             $transactionWithDetails = CartTransaction::with([
@@ -227,12 +234,34 @@ class CartTransactionController extends Controller
                 'cartItems.court'
             ])->find($transaction->id);
 
-            if ($transactionWithDetails && $transactionWithDetails->user && $transactionWithDetails->user->email) {
-                Mail::to($transactionWithDetails->user->email)
-                    ->send(new BookingApproved($transactionWithDetails));
+            if ($transactionWithDetails) {
+                // Determine recipient: Booking For user's email if selected, else creator's email
+                $recipientEmail = $transactionWithDetails->user->email ?? null;
+                $firstCartItem = $transactionWithDetails->cartItems->first();
+                if ($firstCartItem && $firstCartItem->booking_for_user_id && $firstCartItem->bookingForUser && $firstCartItem->bookingForUser->email) {
+                    $recipientEmail = $firstCartItem->bookingForUser->email;
+                }
+
+                $emailDebug['recipient'] = $recipientEmail;
+                $emailDebug['attempted'] = true;
+                if ($recipientEmail) {
+                    Mail::to($recipientEmail)
+                        ->send(new BookingApproved($transactionWithDetails));
+                    $emailDebug['sent'] = true;
+                } else {
+                    Log::warning('cart_approval_email.skipped_no_recipient', [
+                        'transaction_id' => $transactionWithDetails->id,
+                    ]);
+                }
             }
         } catch (\Exception $e) {
-            // Email error but don't fail the approval
+            // Email error but don't fail the approval; capture debug info
+            $emailDebug['error'] = $e->getMessage();
+            Log::error('cart_approval_email.error', [
+                'transaction_id' => $transaction->id,
+                'recipient' => $emailDebug['recipient'],
+                'error' => $emailDebug['error'],
+            ]);
         }
 
         // Notify waitlist users - transaction approved, slots are confirmed
@@ -240,7 +269,8 @@ class CartTransactionController extends Controller
 
         return response()->json([
             'message' => 'Transaction approved successfully and notification email sent',
-            'transaction' => $transaction->load(['approver', 'bookings'])
+            'transaction' => $transaction->load(['approver', 'bookings']),
+            'email_debug' => $emailDebug,
         ]);
     }
 

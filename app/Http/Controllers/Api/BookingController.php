@@ -926,13 +926,49 @@ class BookingController extends Controller
         $booking->generateQrCode();
 
         // Load relationships for email
-        $booking->load(['user', 'court.sport']);
+        $booking->load(['user', 'bookingForUser', 'court.sport']);
 
-        // Send approval email to the user
+        // Send approval email to the user or bookingForUser (with debug logging)
+        $emailDebug = [
+            'attempted' => false,
+            'sent' => false,
+            'recipient' => null,
+            'error' => null,
+        ];
+
         try {
-            Mail::to($booking->user->email)->send(new BookingApprovalMail($booking));
+            // Prefer Booking For user's email if available; otherwise fallback to creator's email
+            $recipientEmail = $booking->booking_for_user_id && $booking->bookingForUser && $booking->bookingForUser->email
+                ? $booking->bookingForUser->email
+                : ($booking->user->email ?? null);
+
+            $emailDebug['recipient'] = $recipientEmail;
+
+            if ($recipientEmail) {
+                $emailDebug['attempted'] = true;
+                Log::info('booking_approval_email.begin', [
+                    'booking_id' => $booking->id,
+                    'recipient' => $recipientEmail,
+                ]);
+                Mail::to($recipientEmail)->send(new BookingApprovalMail($booking));
+                $emailDebug['sent'] = true;
+                Log::info('booking_approval_email.success', [
+                    'booking_id' => $booking->id,
+                    'recipient' => $recipientEmail,
+                ]);
+            } else {
+                Log::warning('booking_approval_email.skipped_no_recipient', [
+                    'booking_id' => $booking->id,
+                ]);
+            }
         } catch (\Exception $e) {
-            // Don't fail the approval if email fails
+            // Don't fail the approval if email fails; capture debug info
+            $emailDebug['error'] = $e->getMessage();
+            Log::error('booking_approval_email.error', [
+                'booking_id' => $booking->id,
+                'recipient' => $emailDebug['recipient'],
+                'error' => $emailDebug['error'],
+            ]);
         }
 
         // Broadcast status change event
@@ -941,7 +977,8 @@ class BookingController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Booking approved successfully',
-            'data' => $booking
+            'data' => $booking,
+            'email_debug' => $emailDebug,
         ]);
     }
 
