@@ -392,7 +392,8 @@ class BookingController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'proof_of_payment' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
+            'proof_of_payment' => 'required|array', // Accept array of files
+            'proof_of_payment.*' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max per file
             'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer' // Optional, defaults to gcash
         ]);
 
@@ -405,25 +406,25 @@ class BookingController extends Controller
         }
 
         try {
-            // Store the uploaded file
-            $file = $request->file('proof_of_payment');
+            $uploadedPaths = [];
 
-            if (!$file) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No file uploaded'
-                ], 400);
+            // Store multiple uploaded files
+            foreach ($request->file('proof_of_payment') as $index => $file) {
+                $filename = 'proof_' . $booking->id . '_' . time() . '_' . $index . '.' . $file->getClientOriginalExtension();
+                $path = $file->storeAs('proofs', $filename, 'public');
+
+                if (!$path) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to store file at index ' . $index
+                    ], 500);
+                }
+
+                $uploadedPaths[] = $path;
             }
 
-            $filename = 'proof_' . $booking->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('proofs', $filename, 'public');
-
-            if (!$path) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to store file'
-                ], 500);
-            }
+            // Store as JSON array
+            $proofOfPaymentJson = json_encode($uploadedPaths);
 
             // Determine payment method: use provided, existing, or default to gcash
             $paymentMethod = $request->payment_method;
@@ -436,7 +437,7 @@ class BookingController extends Controller
 
             // Update booking with proof of payment path, payment method, and mark as paid
             $booking->update([
-                'proof_of_payment' => $path,
+                'proof_of_payment' => $proofOfPaymentJson,
                 'payment_method' => $paymentMethod,
                 'payment_status' => 'paid',
                 'paid_at' => now()
@@ -449,7 +450,7 @@ class BookingController extends Controller
                     $cartTransaction->update([
                         'payment_status' => 'paid',
                         'payment_method' => $paymentMethod,
-                        'proof_of_payment' => $path,
+                        'proof_of_payment' => $proofOfPaymentJson,
                         'paid_at' => now()
                     ]);
                 }
@@ -457,14 +458,16 @@ class BookingController extends Controller
 
             Log::info('Payment proof uploaded and booking marked as paid', [
                 'booking_id' => $booking->id,
-                'payment_method' => $paymentMethod
+                'payment_method' => $paymentMethod,
+                'file_count' => count($uploadedPaths)
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Proof of payment uploaded successfully. Booking is now marked as paid.',
                 'data' => [
-                    'proof_of_payment' => $path,
+                    'proof_of_payment' => $proofOfPaymentJson,
+                    'proof_of_payment_files' => $uploadedPaths,
                     'payment_method' => $paymentMethod,
                     'payment_status' => 'paid',
                     'paid_at' => $booking->paid_at
@@ -517,8 +520,26 @@ class BookingController extends Controller
             ], 404);
         }
 
+        // Try to decode as JSON array (multiple files)
+        $proofFiles = json_decode($booking->proof_of_payment, true);
+
+        // If it's not JSON (backward compatibility with single file), treat as single file
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $proofFiles = [$booking->proof_of_payment];
+        }
+
+        // If index parameter is provided, return specific file
+        $index = $request->query('index', 0);
+
+        if (!isset($proofFiles[$index])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proof of payment file not found at index ' . $index
+            ], 404);
+        }
+
         // Get the file path from storage
-        $path = storage_path('app/public/' . $booking->proof_of_payment);
+        $path = storage_path('app/public/' . $proofFiles[$index]);
 
         if (!file_exists($path)) {
             return response()->json([
@@ -1273,5 +1294,73 @@ class BookingController extends Controller
             'message' => 'Attendance status updated successfully',
             'data' => $booking->load(['user', 'court', 'sport'])
         ]);
+    }
+
+    /**
+     * Resend confirmation email for an approved booking
+     */
+    public function resendConfirmationEmail(Request $request, string $id)
+    {
+        $booking = Booking::with(['user', 'court.sport'])->find($id);
+
+        if (!$booking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Booking not found'
+            ], 404);
+        }
+
+        // Check if user owns this booking, is the booking_for_user, is admin, or is staff
+        $isBookingOwner = $booking->user_id === $request->user()->id;
+        $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
+        $isAdmin = $request->user()->isAdmin();
+        $isStaff = $request->user()->isStaff();
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin && !$isStaff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to resend confirmation email for this booking'
+            ], 403);
+        }
+
+        // Only approved bookings should receive confirmation emails
+        if ($booking->status !== Booking::STATUS_APPROVED) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Confirmation email can only be sent for approved bookings'
+            ], 400);
+        }
+
+        // Determine which email to send to
+        $recipientEmail = $booking->user->email;
+        if ($booking->booking_for_user_id && $booking->bookingForUser) {
+            $recipientEmail = $booking->bookingForUser->email;
+        }
+
+        // Send confirmation email
+        try {
+            Mail::to($recipientEmail)->send(new BookingApprovalMail($booking));
+            Log::info('Booking confirmation email resent successfully', [
+                'booking_id' => $booking->id,
+                'recipient_email' => $recipientEmail,
+                'resent_by' => $request->user()->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Confirmation email sent successfully to ' . $recipientEmail
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to resend booking confirmation email', [
+                'booking_id' => $booking->id,
+                'recipient_email' => $recipientEmail,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

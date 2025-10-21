@@ -682,34 +682,51 @@ class CartController extends Controller
             // Calculate total price for the selected items
             $totalPrice = array_sum(array_column($groupedBookings, 'price'));
 
-            // Process proof of payment - decode base64 and save as file
+            // Process proof of payment - decode base64 and save as file(s)
             $proofOfPaymentPath = null;
             if ($request->proof_of_payment) {
                 try {
-                    $base64String = $request->proof_of_payment;
+                    // Handle both single base64 string and array of base64 strings
+                    $proofData = $request->proof_of_payment;
+                    $proofArray = is_array($proofData) ? $proofData : [$proofData];
+                    $savedPaths = [];
 
-                    // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-                    if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
-                        $base64String = substr($base64String, strpos($base64String, ',') + 1);
-                        $imageType = strtolower($type[1]); // jpg, png, gif, etc.
-                    } else {
-                        $imageType = 'jpg';
-                    }
+                    foreach ($proofArray as $index => $base64String) {
+                        // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+                        if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
+                            $base64String = substr($base64String, strpos($base64String, ',') + 1);
+                            $imageType = strtolower($type[1]); // jpg, png, gif, etc.
+                        } else {
+                            $imageType = 'jpg';
+                        }
 
-                    // Decode base64 to binary image data
-                    $imageData = base64_decode($base64String);
+                        // Decode base64 to binary image data
+                        $imageData = base64_decode($base64String);
 
-                    if ($imageData === false) {
-                        Log::error('Failed to decode base64 proof of payment');
-                    } else {
-                        // Create filename with transaction ID and timestamp
-                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '.' . $imageType;
+                        if ($imageData === false) {
+                            Log::error('Failed to decode base64 proof of payment at index ' . $index);
+                            continue;
+                        }
+
+                        // Create filename with transaction ID, timestamp, and index
+                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '_' . $index . '.' . $imageType;
 
                         // Save to storage/app/public/proofs/
                         Storage::disk('public')->put('proofs/' . $filename, $imageData);
 
-                        $proofOfPaymentPath = 'proofs/' . $filename;
-                        Log::info('Proof of payment saved as file: ' . $proofOfPaymentPath);
+                        $savedPaths[] = 'proofs/' . $filename;
+                        Log::info('Proof of payment saved as file: proofs/' . $filename);
+                    }
+
+                    // Store as JSON array if multiple files, otherwise as single string for backward compatibility
+                    if (count($savedPaths) > 1) {
+                        $proofOfPaymentPath = json_encode($savedPaths);
+                    } elseif (count($savedPaths) === 1) {
+                        $proofOfPaymentPath = $savedPaths[0];
+                    }
+
+                    if ($proofOfPaymentPath) {
+                        Log::info('All proof of payment files saved. Total: ' . count($savedPaths));
                     }
                 } catch (\Exception $e) {
                     Log::error('Failed to save proof of payment as file: ' . $e->getMessage());
@@ -1134,5 +1151,105 @@ class CartController extends Controller
             'message' => 'Cart item updated successfully',
             'data' => $cartItem->load(['court', 'sport', 'court.images'])
         ]);
+    }
+
+    /**
+     * Delete a cart item (admin only - for removing time slots)
+     */
+    public function deleteCartItem(Request $request, $id)
+    {
+        // Only admins can delete cart items
+        if (!$request->user()->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Admin privileges required.'
+            ], 403);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $cartItem = CartItem::with('cartTransaction')->find($id);
+
+            if (!$cartItem) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cart item not found'
+                ], 404);
+            }
+
+            // Check if the transaction is still pending
+            if ($cartItem->cartTransaction && $cartItem->cartTransaction->approval_status !== 'pending') {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete time slots from ' . $cartItem->cartTransaction->approval_status . ' bookings. Only pending bookings can be modified.'
+                ], 400);
+            }
+
+            $transactionId = $cartItem->cart_transaction_id;
+            $price = $cartItem->price;
+
+            // Check if this is the last item in the transaction
+            if ($transactionId) {
+                $itemCount = CartItem::where('cart_transaction_id', $transactionId)
+                    ->where('status', '!=', 'cancelled')
+                    ->count();
+
+                if ($itemCount <= 1) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot delete the last time slot. Please delete the entire booking instead.'
+                    ], 400);
+                }
+            }
+
+            // Mark the cart item as cancelled
+            $cartItem->update(['status' => 'cancelled']);
+
+            // Update cart transaction total price if exists
+            if ($transactionId) {
+                $cartTransaction = CartTransaction::find($transactionId);
+                if ($cartTransaction) {
+                    // Recalculate total from non-cancelled items
+                    $newTotal = CartItem::where('cart_transaction_id', $transactionId)
+                        ->where('status', '!=', 'cancelled')
+                        ->sum('price');
+
+                    $cartTransaction->update([
+                        'total_price' => max(0, $newTotal)
+                    ]);
+
+                    Log::info('Admin deleted cart item', [
+                        'cart_item_id' => $id,
+                        'transaction_id' => $transactionId,
+                        'removed_price' => $price,
+                        'new_total' => $newTotal,
+                        'admin_id' => $request->user()->id
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Time slot deleted successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to delete cart item', [
+                'cart_item_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete time slot: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

@@ -9,6 +9,7 @@ use App\Mail\BookingApproved;
 use App\Mail\WaitlistNotificationMail;
 use App\Events\BookingStatusChanged;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -22,11 +23,23 @@ class CartTransactionController extends Controller
         $userId = $request->user()->id;
 
         // Get transactions where user is either the owner OR the booking_for_user in any cart item
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transactions = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings',
+                'approver'
+            ])
             ->where(function($query) use ($userId) {
                 $query->where('user_id', $userId)
                       ->orWhereHas('cartItems', function($q) use ($userId) {
-                          $q->where('booking_for_user_id', $userId);
+                          $q->where('booking_for_user_id', $userId)
+                            ->where('status', '!=', 'cancelled');
                       });
             })
             ->whereIn('status', ['pending', 'completed'])
@@ -41,19 +54,33 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $query = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'cartItems.bookingForUser', 'bookings', 'approver'])
+        $query = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'cartItems.bookingForUser',
+                'bookings',
+                'approver'
+            ])
             ->whereIn('status', ['pending', 'completed']);
 
         // Filter by booking date range if provided
         if ($request->filled('date_from')) {
             $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '>=', $request->date_from);
+                $q->where('booking_date', '>=', $request->date_from)
+                  ->where('status', '!=', 'cancelled');
             });
         }
 
         if ($request->filled('date_to')) {
             $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '<=', $request->date_to);
+                $q->where('booking_date', '<=', $request->date_to)
+                  ->where('status', '!=', 'cancelled');
             });
         }
 
@@ -77,9 +104,9 @@ class CartTransactionController extends Controller
                 break;
             case 'booking_date':
                 // For booking_date, we need to join with cart_items to sort
-                // We'll use a subquery to get the first cart item's booking_date
+                // We'll use a subquery to get the first cart item's booking_date (excluding cancelled)
                 $query->orderBy(
-                    \DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id ORDER BY booking_date ASC LIMIT 1)'),
+                    DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id AND cart_items.status != \'cancelled\' ORDER BY booking_date ASC LIMIT 1)'),
                     $sortOrder
                 );
                 break;
@@ -99,12 +126,25 @@ class CartTransactionController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transaction = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings',
+                'approver'
+            ])
             ->findOrFail($id);
 
         // Check if user owns this transaction, is the booking_for_user in any cart item, or is admin/staff
         $isOwner = $transaction->user_id === $request->user()->id;
-        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)->exists();
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
         if (!$isOwner && !$isBookingForUser && !$isAdminOrStaff) {
@@ -327,7 +367,17 @@ class CartTransactionController extends Controller
      */
     public function pending(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings'])
+        $transactions = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings'
+            ])
             ->where('approval_status', 'pending')
             ->where('payment_status', 'paid')
             ->orderBy('created_at', 'asc')
@@ -506,7 +556,8 @@ class CartTransactionController extends Controller
     public function uploadProofOfPayment(Request $request, $id)
     {
         $request->validate([
-            'proof_of_payment' => 'required|image|max:5120', // 5MB max
+            'proof_of_payment' => 'required|array', // Accept array of files
+            'proof_of_payment.*' => 'required|image|max:5120', // 5MB max per file
             'payment_method' => 'required|string|in:gcash,cash'
         ]);
 
@@ -535,14 +586,21 @@ class CartTransactionController extends Controller
         }
 
         try {
-            // Store the uploaded file
-            $file = $request->file('proof_of_payment');
-            $filename = 'proof_txn_' . $transaction->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('proofs', $filename, 'public');
+            $uploadedPaths = [];
+
+            // Store multiple uploaded files
+            foreach ($request->file('proof_of_payment') as $index => $file) {
+                $filename = 'proof_txn_' . $transaction->id . '_' . time() . '_' . $index . '.' . $file->getClientOriginalExtension();
+                $path = $file->storeAs('proofs', $filename, 'public');
+                $uploadedPaths[] = $path;
+            }
+
+            // Store as JSON array
+            $proofOfPaymentJson = json_encode($uploadedPaths);
 
             // Update transaction with proof of payment
             $transaction->update([
-                'proof_of_payment' => $path,
+                'proof_of_payment' => $proofOfPaymentJson,
                 'payment_method' => $request->payment_method,
                 'payment_status' => 'paid',
                 'paid_at' => now()
@@ -550,7 +608,7 @@ class CartTransactionController extends Controller
 
             // Update all associated bookings
             $transaction->bookings()->update([
-                'proof_of_payment' => $path,
+                'proof_of_payment' => $proofOfPaymentJson,
                 'payment_method' => $request->payment_method,
                 'payment_status' => 'paid',
                 'paid_at' => now()
@@ -559,14 +617,16 @@ class CartTransactionController extends Controller
             Log::info('Proof of payment uploaded for cart transaction', [
                 'transaction_id' => $transaction->id,
                 'uploaded_by' => $user->id,
-                'payment_method' => $request->payment_method
+                'payment_method' => $request->payment_method,
+                'file_count' => count($uploadedPaths)
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Proof of payment uploaded successfully',
                 'data' => [
-                    'proof_of_payment' => $path,
+                    'proof_of_payment' => $proofOfPaymentJson,
+                    'proof_of_payment_files' => $uploadedPaths,
                     'payment_method' => $request->payment_method,
                     'payment_status' => 'paid',
                     'paid_at' => now()->toDateTimeString()
@@ -623,8 +683,26 @@ class CartTransactionController extends Controller
             ], 404);
         }
 
+        // Try to decode as JSON array (multiple files)
+        $proofFiles = json_decode($transaction->proof_of_payment, true);
+
+        // If it's not JSON (backward compatibility with single file), treat as single file
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $proofFiles = [$transaction->proof_of_payment];
+        }
+
+        // If index parameter is provided, return specific file
+        $index = $request->query('index', 0);
+
+        if (!isset($proofFiles[$index])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proof of payment file not found at index ' . $index
+            ], 404);
+        }
+
         // Get the file path from storage
-        $path = storage_path('app/public/' . $transaction->proof_of_payment);
+        $path = storage_path('app/public/' . $proofFiles[$index]);
 
         if (!file_exists($path)) {
             return response()->json([
@@ -638,5 +716,76 @@ class CartTransactionController extends Controller
             'Content-Type' => mime_content_type($path),
             'Cache-Control' => 'public, max-age=3600'
         ]);
+    }
+
+    /**
+     * Resend confirmation email for an approved cart transaction
+     */
+    public function resendConfirmationEmail(Request $request, $id)
+    {
+        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.bookingForUser'])->find($id);
+
+        if (!$transaction) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Transaction not found'
+            ], 404);
+        }
+
+        // Check if user owns this transaction, is the booking_for_user, is admin, or is staff
+        $isOwner = $transaction->user_id === $request->user()->id;
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)->exists();
+        $isAdmin = $request->user()->isAdmin();
+        $isStaff = $request->user()->isStaff();
+
+        if (!$isOwner && !$isBookingForUser && !$isAdmin && !$isStaff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to resend confirmation email for this transaction'
+            ], 403);
+        }
+
+        // Only approved transactions should receive confirmation emails
+        if ($transaction->approval_status !== 'approved') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Confirmation email can only be sent for approved transactions'
+            ], 400);
+        }
+
+        // Determine which email to send to
+        $recipientEmail = $transaction->user->email;
+
+        // If booking was made for another user, send to that user's email
+        $firstCartItem = $transaction->cartItems->first();
+        if ($firstCartItem && $firstCartItem->booking_for_user_id && $firstCartItem->bookingForUser) {
+            $recipientEmail = $firstCartItem->bookingForUser->email;
+        }
+
+        // Send confirmation email
+        try {
+            Mail::to($recipientEmail)->send(new BookingApproved($transaction));
+            Log::info('Transaction confirmation email resent successfully', [
+                'transaction_id' => $transaction->id,
+                'recipient_email' => $recipientEmail,
+                'resent_by' => $request->user()->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Confirmation email sent successfully to ' . $recipientEmail
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to resend transaction confirmation email', [
+                'transaction_id' => $transaction->id,
+                'recipient_email' => $recipientEmail,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

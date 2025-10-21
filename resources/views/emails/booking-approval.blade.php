@@ -172,7 +172,7 @@
                     <a href="mailto:{{ $contactEmail }}" style="color: #2e7d32; text-decoration: none;">{{ $contactEmail }}</a>
                 </div>
                 @endif
-
+<!--
                 @if($contactMobile)
                 <div style="margin: 8px 0;">
                     <strong>📱 Mobile:</strong>
@@ -185,7 +185,7 @@
                     <strong>💬 Viber:</strong>
                     <span style="color: #1b5e20;">{{ $contactViber }}</span>
                 </div>
-                @endif
+                @endif -->
             </div>
         </div>
         @endif

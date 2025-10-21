@@ -81,12 +81,14 @@ Route::middleware('auth:sanctum')->group(function () {
     // Cart item routes (admin only)
     Route::get('/cart-items/{id}/available-courts', [CartController::class, 'getAvailableCourts'])->middleware('admin');
     Route::put('/cart-items/{id}', [CartController::class, 'updateCartItem'])->middleware('admin');
+    Route::delete('/cart-items/{id}', [CartController::class, 'deleteCartItem'])->middleware('admin');
 
     // Cart Transaction routes
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
     Route::get('/cart-transactions/{id}', [CartTransactionController::class, 'show']);
     Route::get('/cart-transactions/{id}/proof-of-payment', [CartTransactionController::class, 'getProofOfPayment']);
     Route::post('/cart-transactions/{id}/upload-proof', [CartTransactionController::class, 'uploadProofOfPayment']);
+    Route::post('/cart-transactions/{id}/resend-confirmation', [CartTransactionController::class, 'resendConfirmationEmail']);
     Route::delete('/cart-transactions/{id}', [CartTransactionController::class, 'destroy']);
 
     // Booking routes
@@ -102,6 +104,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Proof of payment routes
     Route::get('/bookings/{id}/proof-of-payment', [BookingController::class, 'getProofOfPayment']);
+
+    // Resend confirmation email route
+    Route::post('/bookings/{id}/resend-confirmation', [BookingController::class, 'resendConfirmationEmail']);
 
     // General booking routes
     Route::get('/bookings/{id}', [BookingController::class, 'show']);
