@@ -252,8 +252,7 @@ class BookingController extends Controller
             ], 403);
         }
             if($request->status !== "cancelled"){
-                    $validator = Validator::make($request->all(), [
-                        // 'court_id' => 'required|exists:courts,id',
+                    $validationRules = [
                         'start_time' => 'required|date|after:now',
                         'end_time' => 'required|date|after:start_time',
                         'total_price' => 'required|numeric|min:0',
@@ -265,7 +264,14 @@ class BookingController extends Controller
                         'frequency_duration_months' => 'nullable|integer|min:1',
                         'frequency_end_date' => 'nullable|date|after:start_time',
                         'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer',
-                    ]);
+                    ];
+
+                    // Only admins can change court_id
+                    if ($isAdmin && $request->has('court_id')) {
+                        $validationRules['court_id'] = 'required|exists:courts,id';
+                    }
+
+                    $validator = Validator::make($request->all(), $validationRules);
 
                     if ($validator->fails()) {
                         return response()->json([
@@ -275,8 +281,11 @@ class BookingController extends Controller
                         ], 422);
                     }
 
+        // Determine which court_id to use for conflict checking
+        $courtIdForConflict = $request->has('court_id') ? $request->court_id : $booking->court_id;
+
         // Check for time conflicts with other bookings
-        $conflictingBooking = Booking::where('court_id', $request->court_id)
+        $conflictingBooking = Booking::where('court_id', $courtIdForConflict)
             ->where('id', '!=', $id)
             ->whereIn('status', ['pending', 'approved', 'completed'])
             ->where(function ($query) use ($request) {
@@ -324,6 +333,11 @@ class BookingController extends Controller
                 'frequency_end_date',
                 'payment_method'
             ];
+
+            // Only admins can update court_id
+            if ($isAdmin && $request->has('court_id')) {
+                $onyFields[] = 'court_id';
+            }
         }
 
         // Store old status before updating
@@ -590,7 +604,8 @@ class BookingController extends Controller
         }
 
         // Get all non-cancelled bookings for this court on the specified date
-        $bookings = Booking::where('court_id', $courtId)
+        $bookings = Booking::with(['user', 'bookingForUser'])
+            ->where('court_id', $courtId)
             ->whereIn('status', ['pending', 'approved', 'completed']) // Only consider active bookings
             ->whereBetween('start_time', [$startOfDay, $endOfDay])
             ->orderBy('start_time')
@@ -603,7 +618,10 @@ class BookingController extends Controller
 
         // Get cart items with various statuses
         // Include BOTH paid and unpaid pending items to show waitlist status
-        $cartItems = \App\Models\CartItem::with('cartTransaction.user')
+        $cartItems = \App\Models\CartItem::with([
+                'cartTransaction.user',
+                'cartTransaction.bookingForUser'
+            ])
             ->where('court_id', $courtId)
             ->where('booking_date', $date->format('Y-m-d'))
             ->where('status', '!=', 'cancelled') // Exclude cancelled items
@@ -734,6 +752,13 @@ class BookingController extends Controller
                         $displayStatus = 'waitlist_available';
                     }
 
+                    // Get customer information from cart transaction
+                    $transaction = $conflictingCartItem->cartTransaction;
+                    $effectiveUser = $transaction->bookingForUser ?? $transaction->user;
+                    $displayName = $transaction->booking_for_user_name ?? $effectiveUser->name ?? 'Unknown';
+                    $createdByUser = $transaction->user;
+                    $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
+
                     $availableSlots[] = [
                         'start' => $cartStart->format('H:i'),
                         'end' => $cartEnd->format('H:i'),
@@ -751,7 +776,26 @@ class BookingController extends Controller
                         'type' => $displayType,
                         'status' => $displayStatus,
                         'approval_status' => $approvalStatus,
-                        'payment_status' => $paymentStatus
+                        'payment_status' => $paymentStatus,
+                        // Customer information
+                        'display_name' => $displayName,
+                        'booking_for_user_name' => $transaction->booking_for_user_name,
+                        'user_name' => $transaction->user->name ?? null,
+                        'user_email' => $effectiveUser->email ?? null,
+                        'user_phone' => $effectiveUser->phone ?? null,
+                        'effective_user' => $effectiveUser ? [
+                            'id' => $effectiveUser->id,
+                            'name' => $effectiveUser->name,
+                            'email' => $effectiveUser->email,
+                            'phone' => $effectiveUser->phone ?? null
+                        ] : null,
+                        // Admin booking information
+                        'is_admin_booking' => $isAdminBooking,
+                        'created_by' => $createdByUser ? [
+                            'id' => $createdByUser->id,
+                            'name' => $createdByUser->name,
+                            'role' => $createdByUser->role
+                        ] : null
                     ];
 
                     $addedCartItemIds[] = $conflictingCartItem->id;
@@ -777,6 +821,12 @@ class BookingController extends Controller
                         $bookingDisplayType = 'pending_approval';
                     }
 
+                    // Get customer information from booking
+                    $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
+                    $bookingDisplayName = $conflictingBooking->booking_for_user_name ?? $bookingEffectiveUser->name ?? 'Unknown';
+                    $bookingCreatedByUser = $conflictingBooking->user;
+                    $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
+
                     $availableSlots[] = [
                         'start' => $bookingStart->format('H:i'),
                         'end' => $bookingEnd->format('H:i'),
@@ -793,7 +843,26 @@ class BookingController extends Controller
                         'booking_id' => $conflictingBooking->id,
                         'type' => $bookingDisplayType,
                         'status' => $bookingStatus,
-                        'payment_status' => $bookingPaymentStatus
+                        'payment_status' => $bookingPaymentStatus,
+                        // Customer information
+                        'display_name' => $bookingDisplayName,
+                        'booking_for_user_name' => $conflictingBooking->booking_for_user_name,
+                        'user_name' => $conflictingBooking->user->name ?? null,
+                        'user_email' => $bookingEffectiveUser->email ?? null,
+                        'user_phone' => $bookingEffectiveUser->phone ?? null,
+                        'effective_user' => $bookingEffectiveUser ? [
+                            'id' => $bookingEffectiveUser->id,
+                            'name' => $bookingEffectiveUser->name,
+                            'email' => $bookingEffectiveUser->email,
+                            'phone' => $bookingEffectiveUser->phone ?? null
+                        ] : null,
+                        // Admin booking information
+                        'is_admin_booking' => $isBookingAdminBooking,
+                        'created_by' => $bookingCreatedByUser ? [
+                            'id' => $bookingCreatedByUser->id,
+                            'name' => $bookingCreatedByUser->name,
+                            'role' => $bookingCreatedByUser->role
+                        ] : null
                     ];
 
                     $addedBookingIds[] = $conflictingBooking->id;

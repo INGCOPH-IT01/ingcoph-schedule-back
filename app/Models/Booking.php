@@ -189,6 +189,15 @@ class Booking extends Model
     }
 
     /**
+     * Check if this booking was created by an admin
+     * Returns true if the booking creator (user_id) is an admin
+     */
+    public function isAdminBooking(): bool
+    {
+        return $this->user && $this->user->isAdmin();
+    }
+
+    /**
      * Append custom attributes to model's array/JSON form
      */
     protected $appends = ['display_name', 'effective_user'];

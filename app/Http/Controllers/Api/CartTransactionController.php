@@ -57,7 +57,39 @@ class CartTransactionController extends Controller
             });
         }
 
-        $transactions = $query->orderBy('created_at', 'asc')->get();
+        // Handle sorting
+        $sortBy = $request->input('sort_by', 'created_at');
+        $sortOrder = $request->input('sort_order', 'asc');
+
+        // Validate sort order
+        $sortOrder = in_array(strtolower($sortOrder), ['asc', 'desc']) ? strtolower($sortOrder) : 'asc';
+
+        // Apply sorting based on the field
+        switch ($sortBy) {
+            case 'id':
+                $query->orderBy('id', $sortOrder);
+                break;
+            case 'created_at':
+                $query->orderBy('created_at', $sortOrder);
+                break;
+            case 'total_price':
+                $query->orderBy('total_price', $sortOrder);
+                break;
+            case 'booking_date':
+                // For booking_date, we need to join with cart_items to sort
+                // We'll use a subquery to get the first cart item's booking_date
+                $query->orderBy(
+                    \DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id ORDER BY booking_date ASC LIMIT 1)'),
+                    $sortOrder
+                );
+                break;
+            default:
+                // Default sorting by created_at if invalid sort_by is provided
+                $query->orderBy('created_at', $sortOrder);
+                break;
+        }
+
+        $transactions = $query->get();
 
         return response()->json($transactions);
     }
