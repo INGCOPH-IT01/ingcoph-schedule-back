@@ -10,6 +10,8 @@ class CartTransaction extends Model
 {
     protected $fillable = [
         'user_id',
+        'booking_for_user_id',
+        'booking_for_user_name',
         'total_price',
         'status',
         'approval_status',
@@ -48,6 +50,11 @@ class CartTransaction extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function bookingForUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'booking_for_user_id');
     }
 
     /**

@@ -76,6 +76,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/cart', [CartController::class, 'clear']);
     Route::post('/cart/checkout', [CartController::class, 'checkout']);
 
+    // Cart item routes (admin only)
+    Route::get('/cart-items/{id}/available-courts', [CartController::class, 'getAvailableCourts'])->middleware('admin');
+    Route::put('/cart-items/{id}', [CartController::class, 'updateCartItem'])->middleware('admin');
+
     // Cart Transaction routes
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
     Route::get('/cart-transactions/{id}', [CartTransactionController::class, 'show']);

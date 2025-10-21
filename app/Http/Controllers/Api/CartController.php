@@ -58,6 +58,7 @@ class CartController extends Controller
 
     /**
      * Check and expire cart items that have been pending for more than 1 hour
+     * Admin bookings are excluded from automatic expiration
      */
     private function checkAndExpireCartItems($userId)
     {
@@ -65,13 +66,21 @@ class CartController extends Controller
             $oneHourAgo = \Carbon\Carbon::now()->subHour();
 
             // Find all pending cart transactions for this user that are older than 1 hour
-            $expiredTransactions = CartTransaction::where('user_id', $userId)
+            // Load the user relationship to check if admin
+            $expiredTransactions = CartTransaction::with('user')
+                ->where('user_id', $userId)
                 ->where('status', 'pending')
                 ->where('payment_status', 'unpaid')
                 ->where('created_at', '<', $oneHourAgo)
                 ->get();
 
             foreach ($expiredTransactions as $transaction) {
+                // Skip admin bookings - they should not expire automatically
+                if ($transaction->user && $transaction->user->isAdmin()) {
+                    Log::info("Skipped admin cart transaction #{$transaction->id} from expiration");
+                    continue;
+                }
+
                 // Mark all pending cart items as expired
                 CartItem::where('cart_transaction_id', $transaction->id)
                     ->where('status', 'pending')
@@ -820,5 +829,245 @@ class CartController extends Controller
                 'trace' => config('app.debug') ? $e->getTraceAsString() : null
             ], 500);
         }
+    }
+
+    /**
+     * Get available courts for a specific cart item time slot
+     */
+    public function getAvailableCourts(Request $request, $id)
+    {
+        $cartItem = CartItem::find($id);
+
+        if (!$cartItem) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cart item not found'
+            ], 404);
+        }
+
+        // Get all active courts
+        $courts = Court::where('is_active', true)->get();
+
+        // Prepare datetime strings for conflict checking
+        $bookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+        $startDateTime = $bookingDate . ' ' . $cartItem->start_time;
+        $endDateTime = $bookingDate . ' ' . $cartItem->end_time;
+
+        // Handle midnight crossing
+        $startTime = \Carbon\Carbon::parse($startDateTime);
+        $endTime = \Carbon\Carbon::parse($endDateTime);
+        if ($endTime->lte($startTime)) {
+            $endDateTime = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d') . ' ' . $cartItem->end_time;
+        }
+
+        $availableCourts = [];
+
+        foreach ($courts as $court) {
+            // The current court (where the cart item is currently assigned) is always available
+            if ($court->id == $cartItem->court_id) {
+                $availableCourts[] = [
+                    'id' => $court->id,
+                    'name' => $court->name,
+                    'surface_type' => $court->surface_type,
+                    'is_available' => true,
+                    'is_current' => true
+                ];
+                continue;
+            }
+
+            $isAvailable = true;
+
+            // Check for conflicts with existing bookings
+            $conflictingBooking = Booking::where('court_id', $court->id)
+                ->whereIn('status', ['pending', 'approved', 'completed'])
+                ->where(function ($query) use ($startDateTime, $endDateTime) {
+                    $query->where(function ($q) use ($startDateTime, $endDateTime) {
+                        $q->where('start_time', '>=', $startDateTime)
+                          ->where('start_time', '<', $endDateTime);
+                    })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                        $q->where('end_time', '>', $startDateTime)
+                          ->where('end_time', '<=', $endDateTime);
+                    })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                        $q->where('start_time', '<=', $startDateTime)
+                          ->where('end_time', '>=', $endDateTime);
+                    });
+                })
+                ->exists();
+
+            if ($conflictingBooking) {
+                $isAvailable = false;
+            }
+
+            // Check for conflicts with other cart items
+            if ($isAvailable) {
+                $conflictingCartItem = CartItem::where('court_id', $court->id)
+                    ->where('id', '!=', $id)
+                    ->where('booking_date', $bookingDate)
+                    ->where('status', '!=', 'cancelled')
+                    ->whereHas('cartTransaction', function($query) {
+                        $query->whereIn('approval_status', ['pending', 'approved'])
+                              ->whereIn('payment_status', ['unpaid', 'paid']);
+                    })
+                    ->where(function ($query) use ($cartItem) {
+                        $query->where(function ($q) use ($cartItem) {
+                            $q->where('start_time', '>=', $cartItem->start_time)
+                              ->where('start_time', '<', $cartItem->end_time);
+                        })->orWhere(function ($q) use ($cartItem) {
+                            $q->where('end_time', '>', $cartItem->start_time)
+                              ->where('end_time', '<=', $cartItem->end_time);
+                        })->orWhere(function ($q) use ($cartItem) {
+                            $q->where('start_time', '<=', $cartItem->start_time)
+                              ->where('end_time', '>=', $cartItem->end_time);
+                        });
+                    })
+                    ->exists();
+
+                if ($conflictingCartItem) {
+                    $isAvailable = false;
+                }
+            }
+
+            $availableCourts[] = [
+                'id' => $court->id,
+                'name' => $court->name,
+                'surface_type' => $court->surface_type,
+                'is_available' => $isAvailable,
+                'is_current' => false
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $availableCourts
+        ]);
+    }
+
+    /**
+     * Update a cart item (admin only - for updating court)
+     */
+    public function updateCartItem(Request $request, $id)
+    {
+        // Only admins can update cart items
+        if (!$request->user()->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Admin privileges required.'
+            ], 403);
+        }
+
+        $cartItem = CartItem::find($id);
+
+        if (!$cartItem) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cart item not found'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'court_id' => 'required|exists:courts,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Get the new court
+        $newCourt = Court::find($request->court_id);
+
+        if (!$newCourt || !$newCourt->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Selected court is not available'
+            ], 400);
+        }
+
+        // Create full datetime for conflict checking
+        // Ensure we only have the date part (booking_date might be a full datetime or just a date)
+        $bookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+        $startDateTime = $bookingDate . ' ' . $cartItem->start_time;
+        $endDateTime = $bookingDate . ' ' . $cartItem->end_time;
+
+        // Handle midnight crossing
+        $startTime = \Carbon\Carbon::parse($startDateTime);
+        $endTime = \Carbon\Carbon::parse($endDateTime);
+        if ($endTime->lte($startTime)) {
+            $endDateTime = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d') . ' ' . $cartItem->end_time;
+        }
+
+        // Check for conflicts on the new court
+        $conflictingBooking = Booking::where('court_id', $request->court_id)
+            ->whereIn('status', ['pending', 'approved', 'completed'])
+            ->where(function ($query) use ($startDateTime, $endDateTime) {
+                $query->where(function ($q) use ($startDateTime, $endDateTime) {
+                    // Existing booking starts during new booking
+                    $q->where('start_time', '>=', $startDateTime)
+                      ->where('start_time', '<', $endDateTime);
+                })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                    // Existing booking ends during new booking
+                    $q->where('end_time', '>', $startDateTime)
+                      ->where('end_time', '<=', $endDateTime);
+                })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
+                    // Existing booking completely contains new booking
+                    $q->where('start_time', '<=', $startDateTime)
+                      ->where('end_time', '>=', $endDateTime);
+                });
+            })
+            ->first();
+
+        if ($conflictingBooking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Time slot conflicts with existing booking on the selected court'
+            ], 409);
+        }
+
+        // Check for conflicts with other cart items on the new court
+        $conflictingCartItem = CartItem::where('court_id', $request->court_id)
+            ->where('id', '!=', $id)
+            ->where('booking_date', $bookingDate)
+            ->where('status', '!=', 'cancelled')
+            ->whereHas('cartTransaction', function($query) {
+                $query->whereIn('approval_status', ['pending', 'approved'])
+                      ->whereIn('payment_status', ['unpaid', 'paid']);
+            })
+            ->where(function ($query) use ($cartItem) {
+                $query->where(function ($q) use ($cartItem) {
+                    $q->where('start_time', '>=', $cartItem->start_time)
+                      ->where('start_time', '<', $cartItem->end_time);
+                })->orWhere(function ($q) use ($cartItem) {
+                    $q->where('end_time', '>', $cartItem->start_time)
+                      ->where('end_time', '<=', $cartItem->end_time);
+                })->orWhere(function ($q) use ($cartItem) {
+                    $q->where('start_time', '<=', $cartItem->start_time)
+                      ->where('end_time', '>=', $cartItem->end_time);
+                });
+            })
+            ->first();
+
+        if ($conflictingCartItem) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Time slot conflicts with another pending booking on the selected court'
+            ], 409);
+        }
+
+        // Update the cart item
+        $cartItem->update([
+            'court_id' => $request->court_id
+        ]);
+
+        // Refresh the cart item from database to ensure we have the latest data
+        $cartItem->refresh();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cart item updated successfully',
+            'data' => $cartItem->load(['court', 'sport', 'court.images'])
+        ]);
     }
 }
