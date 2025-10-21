@@ -7,7 +7,6 @@ use App\Models\CartItem;
 use App\Models\CartTransaction;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use App\Helpers\BusinessHoursHelper;
 
 class CancelExpiredCartItems extends Command
@@ -52,7 +51,6 @@ class CancelExpiredCartItems extends Command
                 // Skip admin bookings - they should not expire automatically
                 if ($transaction->user && $transaction->user->isAdmin()) {
                     $skippedAdminCount++;
-                    Log::info("Skipped admin cart transaction #{$transaction->id} from expiration");
                     continue;
                 }
 
@@ -74,8 +72,6 @@ class CancelExpiredCartItems extends Command
 
                 $cancelledCount += $itemsCancelled;
                 $transactionCount++;
-
-                Log::info("Expired cart transaction #{$transaction->id} with {$itemsCancelled} items (created: {$createdAt->format('Y-m-d H:i:s')})");
             }
 
             DB::commit();
@@ -90,7 +86,6 @@ class CancelExpiredCartItems extends Command
         } catch (\Exception $e) {
             DB::rollBack();
             $this->error("Failed to cancel expired cart items: " . $e->getMessage());
-            Log::error("Failed to cancel expired cart items: " . $e->getMessage());
 
             return Command::FAILURE;
         }

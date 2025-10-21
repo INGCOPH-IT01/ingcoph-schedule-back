@@ -212,13 +212,14 @@ class CartTransactionController extends Controller
             broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
         }
 
-        Log::info('Cart transaction approved', [
-            'transaction_id' => $transaction->id,
-            'approved_by' => $request->user()->id,
-            'user_id' => $transaction->user_id
-        ]);
+        // Send email notification to user (with debug logging)
+        $emailDebug = [
+            'attempted' => false,
+            'sent' => false,
+            'recipient' => null,
+            'error' => null,
+        ];
 
-        // Send email notification to user
         try {
             // Reload transaction with full relationships for email
             $transactionWithDetails = CartTransaction::with([
@@ -233,15 +234,34 @@ class CartTransactionController extends Controller
                 'cartItems.court'
             ])->find($transaction->id);
 
-            if ($transactionWithDetails && $transactionWithDetails->user && $transactionWithDetails->user->email) {
-                Mail::to($transactionWithDetails->user->email)
-                    ->send(new BookingApproved($transactionWithDetails));
+            if ($transactionWithDetails) {
+                // Determine recipient: Booking For user's email if selected, else creator's email
+                $recipientEmail = $transactionWithDetails->user->email ?? null;
+                $firstCartItem = $transactionWithDetails->cartItems->first();
+                if ($firstCartItem && $firstCartItem->booking_for_user_id && $firstCartItem->bookingForUser && $firstCartItem->bookingForUser->email) {
+                    $recipientEmail = $firstCartItem->bookingForUser->email;
+                }
 
-                Log::info('Approval email sent to: ' . $transactionWithDetails->user->email);
+                $emailDebug['recipient'] = $recipientEmail;
+                $emailDebug['attempted'] = true;
+                if ($recipientEmail) {
+                    Mail::to($recipientEmail)
+                        ->send(new BookingApproved($transactionWithDetails));
+                    $emailDebug['sent'] = true;
+                } else {
+                    Log::warning('cart_approval_email.skipped_no_recipient', [
+                        'transaction_id' => $transactionWithDetails->id,
+                    ]);
+                }
             }
         } catch (\Exception $e) {
-            // Log error but don't fail the approval
-            Log::error('Failed to send approval email: ' . $e->getMessage());
+            // Email error but don't fail the approval; capture debug info
+            $emailDebug['error'] = $e->getMessage();
+            Log::error('cart_approval_email.error', [
+                'transaction_id' => $transaction->id,
+                'recipient' => $emailDebug['recipient'],
+                'error' => $emailDebug['error'],
+            ]);
         }
 
         // Notify waitlist users - transaction approved, slots are confirmed
@@ -249,7 +269,8 @@ class CartTransactionController extends Controller
 
         return response()->json([
             'message' => 'Transaction approved successfully and notification email sent',
-            'transaction' => $transaction->load(['approver', 'bookings'])
+            'transaction' => $transaction->load(['approver', 'bookings']),
+            'email_debug' => $emailDebug,
         ]);
     }
 
@@ -286,18 +307,11 @@ class CartTransactionController extends Controller
             broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'rejected'))->toOthers();
         }
 
-        Log::info('Cart transaction rejected', [
-            'transaction_id' => $transaction->id,
-            'rejected_by' => $request->user()->id,
-            'user_id' => $transaction->user_id,
-            'reason' => $request->reason
-        ]);
-
         // Notify waitlist users - transaction rejected, slots are now available
         try {
             $this->notifyWaitlistUsers($transaction, 'rejected');
         } catch (\Exception $e) {
-            Log::error('Failed to notify waitlist users: ' . $e->getMessage());
+            // Continue silently
         }
 
         return response()->json([
@@ -329,8 +343,6 @@ class CartTransactionController extends Controller
                 ->orderBy('created_at')
                 ->get();
 
-            Log::info('Found ' . $waitlistEntries->count() . ' waitlist entries for court ' . $cartItem->court_id);
-
             // Notify each waitlist user
             foreach ($waitlistEntries as $waitlistEntry) {
                 try {
@@ -344,19 +356,9 @@ class CartTransactionController extends Controller
                     if ($waitlistEntry->user && $waitlistEntry->user->email) {
                         Mail::to($waitlistEntry->user->email)
                             ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
-
-                        Log::info('Waitlist notification email sent', [
-                            'waitlist_id' => $waitlistEntry->id,
-                            'user_id' => $waitlistEntry->user_id,
-                            'user_email' => $waitlistEntry->user->email,
-                            'notification_type' => $notificationType
-                        ]);
                     }
                 } catch (\Exception $e) {
-                    Log::error('Failed to notify waitlist user', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'error' => $e->getMessage()
-                    ]);
+                    // Continue processing other entries
                 }
             }
         }
@@ -438,12 +440,6 @@ class CartTransactionController extends Controller
                 }
             }
 
-            Log::info('QR code verified successfully', [
-                'transaction_id' => $transaction->id,
-                'verified_by' => $request->user()->id,
-                'attendance_status' => 'showed_up'
-            ]);
-
             return response()->json([
                 'valid' => true,
                 'message' => 'QR code verified successfully',
@@ -451,11 +447,6 @@ class CartTransactionController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('QR verification failed', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'valid' => false,
                 'message' => 'QR code verification failed: ' . $e->getMessage()
@@ -490,23 +481,12 @@ class CartTransactionController extends Controller
             // Delete the transaction (cart items will be cascade deleted)
             $transaction->delete();
 
-            Log::info('Cart transaction deleted', [
-                'transaction_id' => $id,
-                'user_id' => $request->user()->id
-            ]);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Transaction deleted successfully'
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Failed to delete cart transaction', [
-                'transaction_id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete transaction: ' . $e->getMessage()
@@ -535,12 +515,6 @@ class CartTransactionController extends Controller
 
         $transaction->update([
             'attendance_status' => $request->attendance_status
-        ]);
-
-        Log::info('Attendance status updated', [
-            'transaction_id' => $transaction->id,
-            'attendance_status' => $request->attendance_status,
-            'updated_by' => $request->user()->id
         ]);
 
         return response()->json([
@@ -614,13 +588,6 @@ class CartTransactionController extends Controller
                 'paid_at' => now()
             ]);
 
-            Log::info('Proof of payment uploaded for cart transaction', [
-                'transaction_id' => $transaction->id,
-                'uploaded_by' => $user->id,
-                'payment_method' => $request->payment_method,
-                'file_count' => count($uploadedPaths)
-            ]);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Proof of payment uploaded successfully',
@@ -634,12 +601,6 @@ class CartTransactionController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Failed to upload proof of payment for cart transaction', [
-                'transaction_id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload proof of payment: ' . $e->getMessage()
@@ -765,23 +726,12 @@ class CartTransactionController extends Controller
         // Send confirmation email
         try {
             Mail::to($recipientEmail)->send(new BookingApproved($transaction));
-            Log::info('Transaction confirmation email resent successfully', [
-                'transaction_id' => $transaction->id,
-                'recipient_email' => $recipientEmail,
-                'resent_by' => $request->user()->id
-            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Confirmation email sent successfully to ' . $recipientEmail
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to resend transaction confirmation email', [
-                'transaction_id' => $transaction->id,
-                'recipient_email' => $recipientEmail,
-                'error' => $e->getMessage()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send confirmation email: ' . $e->getMessage()
