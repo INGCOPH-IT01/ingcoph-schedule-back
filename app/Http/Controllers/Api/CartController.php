@@ -1152,4 +1152,104 @@ class CartController extends Controller
             'data' => $cartItem->load(['court', 'sport', 'court.images'])
         ]);
     }
+
+    /**
+     * Delete a cart item (admin only - for removing time slots)
+     */
+    public function deleteCartItem(Request $request, $id)
+    {
+        // Only admins can delete cart items
+        if (!$request->user()->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Admin privileges required.'
+            ], 403);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $cartItem = CartItem::with('cartTransaction')->find($id);
+
+            if (!$cartItem) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cart item not found'
+                ], 404);
+            }
+
+            // Check if the transaction is still pending
+            if ($cartItem->cartTransaction && $cartItem->cartTransaction->approval_status !== 'pending') {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete time slots from ' . $cartItem->cartTransaction->approval_status . ' bookings. Only pending bookings can be modified.'
+                ], 400);
+            }
+
+            $transactionId = $cartItem->cart_transaction_id;
+            $price = $cartItem->price;
+
+            // Check if this is the last item in the transaction
+            if ($transactionId) {
+                $itemCount = CartItem::where('cart_transaction_id', $transactionId)
+                    ->where('status', '!=', 'cancelled')
+                    ->count();
+
+                if ($itemCount <= 1) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Cannot delete the last time slot. Please delete the entire booking instead.'
+                    ], 400);
+                }
+            }
+
+            // Mark the cart item as cancelled
+            $cartItem->update(['status' => 'cancelled']);
+
+            // Update cart transaction total price if exists
+            if ($transactionId) {
+                $cartTransaction = CartTransaction::find($transactionId);
+                if ($cartTransaction) {
+                    // Recalculate total from non-cancelled items
+                    $newTotal = CartItem::where('cart_transaction_id', $transactionId)
+                        ->where('status', '!=', 'cancelled')
+                        ->sum('price');
+
+                    $cartTransaction->update([
+                        'total_price' => max(0, $newTotal)
+                    ]);
+
+                    Log::info('Admin deleted cart item', [
+                        'cart_item_id' => $id,
+                        'transaction_id' => $transactionId,
+                        'removed_price' => $price,
+                        'new_total' => $newTotal,
+                        'admin_id' => $request->user()->id
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Time slot deleted successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to delete cart item', [
+                'cart_item_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete time slot: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

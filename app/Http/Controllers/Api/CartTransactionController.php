@@ -9,6 +9,7 @@ use App\Mail\BookingApproved;
 use App\Mail\WaitlistNotificationMail;
 use App\Events\BookingStatusChanged;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -22,11 +23,23 @@ class CartTransactionController extends Controller
         $userId = $request->user()->id;
 
         // Get transactions where user is either the owner OR the booking_for_user in any cart item
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transactions = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings',
+                'approver'
+            ])
             ->where(function($query) use ($userId) {
                 $query->where('user_id', $userId)
                       ->orWhereHas('cartItems', function($q) use ($userId) {
-                          $q->where('booking_for_user_id', $userId);
+                          $q->where('booking_for_user_id', $userId)
+                            ->where('status', '!=', 'cancelled');
                       });
             })
             ->whereIn('status', ['pending', 'completed'])
@@ -41,19 +54,33 @@ class CartTransactionController extends Controller
      */
     public function all(Request $request)
     {
-        $query = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'cartItems.bookingForUser', 'bookings', 'approver'])
+        $query = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'cartItems.bookingForUser',
+                'bookings',
+                'approver'
+            ])
             ->whereIn('status', ['pending', 'completed']);
 
         // Filter by booking date range if provided
         if ($request->filled('date_from')) {
             $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '>=', $request->date_from);
+                $q->where('booking_date', '>=', $request->date_from)
+                  ->where('status', '!=', 'cancelled');
             });
         }
 
         if ($request->filled('date_to')) {
             $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '<=', $request->date_to);
+                $q->where('booking_date', '<=', $request->date_to)
+                  ->where('status', '!=', 'cancelled');
             });
         }
 
@@ -77,9 +104,9 @@ class CartTransactionController extends Controller
                 break;
             case 'booking_date':
                 // For booking_date, we need to join with cart_items to sort
-                // We'll use a subquery to get the first cart item's booking_date
+                // We'll use a subquery to get the first cart item's booking_date (excluding cancelled)
                 $query->orderBy(
-                    \DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id ORDER BY booking_date ASC LIMIT 1)'),
+                    DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id AND cart_items.status != \'cancelled\' ORDER BY booking_date ASC LIMIT 1)'),
                     $sortOrder
                 );
                 break;
@@ -99,12 +126,25 @@ class CartTransactionController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings', 'approver'])
+        $transaction = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings',
+                'approver'
+            ])
             ->findOrFail($id);
 
         // Check if user owns this transaction, is the booking_for_user in any cart item, or is admin/staff
         $isOwner = $transaction->user_id === $request->user()->id;
-        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)->exists();
+        $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)
+            ->where('status', '!=', 'cancelled')
+            ->exists();
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
         if (!$isOwner && !$isBookingForUser && !$isAdminOrStaff) {
@@ -327,7 +367,17 @@ class CartTransactionController extends Controller
      */
     public function pending(Request $request)
     {
-        $transactions = CartTransaction::with(['user', 'cartItems.court.sport', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookings', 'bookings'])
+        $transactions = CartTransaction::with([
+                'user',
+                'cartItems' => function($query) {
+                    $query->where('status', '!=', 'cancelled');
+                },
+                'cartItems.court.sport',
+                'cartItems.sport',
+                'cartItems.court.images',
+                'cartItems.bookings',
+                'bookings'
+            ])
             ->where('approval_status', 'pending')
             ->where('payment_status', 'paid')
             ->orderBy('created_at', 'asc')
