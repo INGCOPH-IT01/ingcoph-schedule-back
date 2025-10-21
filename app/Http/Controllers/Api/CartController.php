@@ -682,34 +682,51 @@ class CartController extends Controller
             // Calculate total price for the selected items
             $totalPrice = array_sum(array_column($groupedBookings, 'price'));
 
-            // Process proof of payment - decode base64 and save as file
+            // Process proof of payment - decode base64 and save as file(s)
             $proofOfPaymentPath = null;
             if ($request->proof_of_payment) {
                 try {
-                    $base64String = $request->proof_of_payment;
+                    // Handle both single base64 string and array of base64 strings
+                    $proofData = $request->proof_of_payment;
+                    $proofArray = is_array($proofData) ? $proofData : [$proofData];
+                    $savedPaths = [];
 
-                    // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-                    if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
-                        $base64String = substr($base64String, strpos($base64String, ',') + 1);
-                        $imageType = strtolower($type[1]); // jpg, png, gif, etc.
-                    } else {
-                        $imageType = 'jpg';
-                    }
+                    foreach ($proofArray as $index => $base64String) {
+                        // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+                        if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
+                            $base64String = substr($base64String, strpos($base64String, ',') + 1);
+                            $imageType = strtolower($type[1]); // jpg, png, gif, etc.
+                        } else {
+                            $imageType = 'jpg';
+                        }
 
-                    // Decode base64 to binary image data
-                    $imageData = base64_decode($base64String);
+                        // Decode base64 to binary image data
+                        $imageData = base64_decode($base64String);
 
-                    if ($imageData === false) {
-                        Log::error('Failed to decode base64 proof of payment');
-                    } else {
-                        // Create filename with transaction ID and timestamp
-                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '.' . $imageType;
+                        if ($imageData === false) {
+                            Log::error('Failed to decode base64 proof of payment at index ' . $index);
+                            continue;
+                        }
+
+                        // Create filename with transaction ID, timestamp, and index
+                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '_' . $index . '.' . $imageType;
 
                         // Save to storage/app/public/proofs/
                         Storage::disk('public')->put('proofs/' . $filename, $imageData);
 
-                        $proofOfPaymentPath = 'proofs/' . $filename;
-                        Log::info('Proof of payment saved as file: ' . $proofOfPaymentPath);
+                        $savedPaths[] = 'proofs/' . $filename;
+                        Log::info('Proof of payment saved as file: proofs/' . $filename);
+                    }
+
+                    // Store as JSON array if multiple files, otherwise as single string for backward compatibility
+                    if (count($savedPaths) > 1) {
+                        $proofOfPaymentPath = json_encode($savedPaths);
+                    } elseif (count($savedPaths) === 1) {
+                        $proofOfPaymentPath = $savedPaths[0];
+                    }
+
+                    if ($proofOfPaymentPath) {
+                        Log::info('All proof of payment files saved. Total: ' . count($savedPaths));
                     }
                 } catch (\Exception $e) {
                     Log::error('Failed to save proof of payment as file: ' . $e->getMessage());

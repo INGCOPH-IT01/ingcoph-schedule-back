@@ -506,7 +506,8 @@ class CartTransactionController extends Controller
     public function uploadProofOfPayment(Request $request, $id)
     {
         $request->validate([
-            'proof_of_payment' => 'required|image|max:5120', // 5MB max
+            'proof_of_payment' => 'required|array', // Accept array of files
+            'proof_of_payment.*' => 'required|image|max:5120', // 5MB max per file
             'payment_method' => 'required|string|in:gcash,cash'
         ]);
 
@@ -535,14 +536,21 @@ class CartTransactionController extends Controller
         }
 
         try {
-            // Store the uploaded file
-            $file = $request->file('proof_of_payment');
-            $filename = 'proof_txn_' . $transaction->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $path = $file->storeAs('proofs', $filename, 'public');
+            $uploadedPaths = [];
+
+            // Store multiple uploaded files
+            foreach ($request->file('proof_of_payment') as $index => $file) {
+                $filename = 'proof_txn_' . $transaction->id . '_' . time() . '_' . $index . '.' . $file->getClientOriginalExtension();
+                $path = $file->storeAs('proofs', $filename, 'public');
+                $uploadedPaths[] = $path;
+            }
+
+            // Store as JSON array
+            $proofOfPaymentJson = json_encode($uploadedPaths);
 
             // Update transaction with proof of payment
             $transaction->update([
-                'proof_of_payment' => $path,
+                'proof_of_payment' => $proofOfPaymentJson,
                 'payment_method' => $request->payment_method,
                 'payment_status' => 'paid',
                 'paid_at' => now()
@@ -550,7 +558,7 @@ class CartTransactionController extends Controller
 
             // Update all associated bookings
             $transaction->bookings()->update([
-                'proof_of_payment' => $path,
+                'proof_of_payment' => $proofOfPaymentJson,
                 'payment_method' => $request->payment_method,
                 'payment_status' => 'paid',
                 'paid_at' => now()
@@ -559,14 +567,16 @@ class CartTransactionController extends Controller
             Log::info('Proof of payment uploaded for cart transaction', [
                 'transaction_id' => $transaction->id,
                 'uploaded_by' => $user->id,
-                'payment_method' => $request->payment_method
+                'payment_method' => $request->payment_method,
+                'file_count' => count($uploadedPaths)
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Proof of payment uploaded successfully',
                 'data' => [
-                    'proof_of_payment' => $path,
+                    'proof_of_payment' => $proofOfPaymentJson,
+                    'proof_of_payment_files' => $uploadedPaths,
                     'payment_method' => $request->payment_method,
                     'payment_status' => 'paid',
                     'paid_at' => now()->toDateTimeString()
@@ -623,8 +633,26 @@ class CartTransactionController extends Controller
             ], 404);
         }
 
+        // Try to decode as JSON array (multiple files)
+        $proofFiles = json_decode($transaction->proof_of_payment, true);
+
+        // If it's not JSON (backward compatibility with single file), treat as single file
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $proofFiles = [$transaction->proof_of_payment];
+        }
+
+        // If index parameter is provided, return specific file
+        $index = $request->query('index', 0);
+
+        if (!isset($proofFiles[$index])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Proof of payment file not found at index ' . $index
+            ], 404);
+        }
+
         // Get the file path from storage
-        $path = storage_path('app/public/' . $transaction->proof_of_payment);
+        $path = storage_path('app/public/' . $proofFiles[$index]);
 
         if (!file_exists($path)) {
             return response()->json([
