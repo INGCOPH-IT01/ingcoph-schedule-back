@@ -362,14 +362,6 @@ class BookingController extends Controller
      */
     public function uploadProofOfPayment(Request $request, $id)
     {
-        Log::info('Upload proof of payment request received', [
-            'booking_id' => $id,
-            'user_id' => $request->user()->id,
-            'has_file' => $request->hasFile('proof_of_payment'),
-            'payment_method' => $request->input('payment_method'),
-            'all_input' => $request->all()
-        ]);
-
         $booking = Booking::find($id);
 
         if (!$booking) {
@@ -456,12 +448,6 @@ class BookingController extends Controller
                 }
             }
 
-            Log::info('Payment proof uploaded and booking marked as paid', [
-                'booking_id' => $booking->id,
-                'payment_method' => $paymentMethod,
-                'file_count' => count($uploadedPaths)
-            ]);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Proof of payment uploaded successfully. Booking is now marked as paid.',
@@ -474,9 +460,6 @@ class BookingController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error('Upload proof of payment error: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload proof of payment: ' . $e->getMessage()
@@ -948,16 +931,7 @@ class BookingController extends Controller
         // Send approval email to the user
         try {
             Mail::to($booking->user->email)->send(new BookingApprovalMail($booking));
-            Log::info('Booking approval email sent successfully', [
-                'booking_id' => $booking->id,
-                'user_email' => $booking->user->email
-            ]);
         } catch (\Exception $e) {
-            Log::error('Failed to send booking approval email', [
-                'booking_id' => $booking->id,
-                'user_email' => $booking->user->email,
-                'error' => $e->getMessage()
-            ]);
             // Don't fail the approval if email fails
         }
 
@@ -1340,23 +1314,12 @@ class BookingController extends Controller
         // Send confirmation email
         try {
             Mail::to($recipientEmail)->send(new BookingApprovalMail($booking));
-            Log::info('Booking confirmation email resent successfully', [
-                'booking_id' => $booking->id,
-                'recipient_email' => $recipientEmail,
-                'resent_by' => $request->user()->id
-            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Confirmation email sent successfully to ' . $recipientEmail
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to resend booking confirmation email', [
-                'booking_id' => $booking->id,
-                'recipient_email' => $recipientEmail,
-                'error' => $e->getMessage()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send confirmation email: ' . $e->getMessage()

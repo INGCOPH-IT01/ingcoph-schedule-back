@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\CompanySetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class CompanySettingController extends Controller
@@ -140,7 +139,6 @@ class CompanySettingController extends Controller
                 'data' => $settings
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching company settings: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch company settings'
@@ -164,7 +162,6 @@ class CompanySettingController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching company setting: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch setting'
@@ -370,8 +367,6 @@ class CompanySettingController extends Controller
                 }
             }
 
-            Log::info('Company settings updated by admin: ' . $request->user()->email);
-
             $responseData = [
                 'company_name' => $request->company_name,
                 'theme_primary_color' => CompanySetting::get('theme_primary_color', '#B71C1C'),
@@ -425,7 +420,6 @@ class CompanySettingController extends Controller
                 'data' => $responseData
             ]);
         } catch (\Exception $e) {
-            Log::error('Error updating company settings: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update company settings: ' . $e->getMessage()
@@ -447,14 +441,11 @@ class CompanySettingController extends Controller
 
             CompanySetting::set('company_logo', null);
 
-            Log::info('Company logo deleted by admin: ' . $request->user()->email);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Company logo deleted successfully'
             ]);
         } catch (\Exception $e) {
-            Log::error('Error deleting company logo: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete company logo: ' . $e->getMessage()
@@ -476,14 +467,11 @@ class CompanySettingController extends Controller
 
             CompanySetting::set('payment_qr_code', null);
 
-            Log::info('Payment QR code deleted by admin: ' . $request->user()->email);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Payment QR code deleted successfully'
             ]);
         } catch (\Exception $e) {
-            Log::error('Error deleting payment QR code: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete payment QR code: ' . $e->getMessage()

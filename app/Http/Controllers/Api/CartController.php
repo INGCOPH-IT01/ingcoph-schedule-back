@@ -75,7 +75,6 @@ class CartController extends Controller
             foreach ($pendingTransactions as $transaction) {
                 // Skip admin bookings - they should not expire automatically
                 if ($transaction->user && $transaction->user->isAdmin()) {
-                    Log::info("Skipped admin cart transaction #{$transaction->id} from expiration");
                     continue;
                 }
 
@@ -93,11 +92,9 @@ class CartController extends Controller
 
                 // Mark the transaction as expired
                 $transaction->update(['status' => 'expired']);
-
-                Log::info("Auto-expired cart transaction #{$transaction->id} for user #{$userId} (business hours)");
             }
         } catch (\Exception $e) {
-            Log::error("Failed to auto-expire cart items for user #{$userId}: " . $e->getMessage());
+            // Continue silently
         }
     }
 
@@ -106,8 +103,6 @@ class CartController extends Controller
      */
     public function store(Request $request)
     {
-        Log::info('CartController::store - Received request data:', $request->all());
-
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.court_id' => 'required|exists:courts,id',
@@ -161,8 +156,6 @@ class CartController extends Controller
                 'payment_method' => 'pending',
                 'payment_status' => 'unpaid'
             ]);
-
-            Log::info('Created new cart transaction: ' . $cartTransaction->id);
 
             foreach ($request->items as $item) {
                 // Check if item already exists in cart
@@ -270,14 +263,6 @@ class CartController extends Controller
                     // Instead of adding to cart, add to waitlist
                     DB::rollBack();
 
-                    Log::info('Adding user to waitlist', [
-                        'user_id' => $userId,
-                        'court_id' => $item['court_id'],
-                        'start_time' => $startDateTime,
-                        'end_time' => $endDateTime,
-                        'pending_cart_transaction_id' => $pendingCartTransactionId
-                    ]);
-
                     // Start new transaction for waitlist
                     DB::beginTransaction();
 
@@ -302,11 +287,6 @@ class CartController extends Controller
                     ]);
 
                     DB::commit();
-
-                    Log::info('User added to waitlist successfully', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'position' => $nextPosition
-                    ]);
 
                     return response()->json([
                         'message' => 'This time slot is currently pending approval for another user. You have been added to the waitlist.',
@@ -343,22 +323,6 @@ class CartController extends Controller
                 }
 
                 // If we reach here, booking is allowed (either no conflict or admin bypassing waitlist)
-                if ($isPendingApprovalBooking && $request->user()->role !== 'user') {
-                    Log::info('Admin/Staff bypassing waitlist for pending slot', [
-                        'user_id' => $userId,
-                        'user_role' => $request->user()->role,
-                        'court_id' => $item['court_id'],
-                        'start_time' => $startDateTime,
-                        'end_time' => $endDateTime
-                    ]);
-                }
-
-                Log::info('Creating cart item with admin fields:', [
-                    'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
-                    'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
-                    'admin_notes' => $item['admin_notes'] ?? null
-                ]);
-
                 $cartItem = CartItem::create([
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
@@ -374,12 +338,6 @@ class CartController extends Controller
                     'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
                     'admin_notes' => $item['admin_notes'] ?? null
                 ]);
-
-                Log::info('Cart item created with ID: ' . $cartItem->id . ', admin fields: ' . json_encode([
-                    'booking_for_user_id' => $cartItem->booking_for_user_id,
-                    'booking_for_user_name' => $cartItem->booking_for_user_name,
-                    'admin_notes' => $cartItem->admin_notes
-                ]));
 
                 $totalPrice += floatval($item['price']);
                 $addedItems[] = $cartItem->load(['court', 'sport', 'court.images']);
@@ -570,9 +528,6 @@ class CartController extends Controller
      */
     public function checkout(Request $request)
     {
-            Log::info('Checkout called for user: ' . $request->user()->id);
-            Log::info('Request data: ' . json_encode($request->all()));
-
         // Check if user is Admin or Staff
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
@@ -588,7 +543,6 @@ class CartController extends Controller
         $validator = Validator::make($request->all(), $validationRules);
 
         if ($validator->fails()) {
-            Log::error('Validation failed: ' . json_encode($validator->errors()));
             return response()->json([
                 'message' => 'Validation failed',
                 'errors' => $validator->errors()
@@ -607,7 +561,6 @@ class CartController extends Controller
                 ->first();
 
             if (!$cartTransaction) {
-                Log::warning('No pending cart transaction for user: ' . $userId);
                 return response()->json([
                     'message' => 'No pending cart found'
                 ], 400);
@@ -619,9 +572,6 @@ class CartController extends Controller
 
             if ($request->has('selected_items') && !empty($request->selected_items)) {
                 $cartItemsQuery->whereIn('id', $request->selected_items);
-                Log::info('Checking out selected items: ' . json_encode($request->selected_items));
-            } else {
-                Log::info('Checking out all cart items in transaction');
             }
 
             $cartItems = $cartItemsQuery
@@ -630,10 +580,7 @@ class CartController extends Controller
                 ->orderBy('start_time')
                 ->get();
 
-            Log::info('Found ' . $cartItems->count() . ' cart items to checkout');
-
             if ($cartItems->isEmpty()) {
-                Log::warning('No items to checkout for user: ' . $userId);
                 return response()->json([
                     'message' => 'No items selected for checkout'
                 ], 400);
@@ -704,7 +651,6 @@ class CartController extends Controller
                         $imageData = base64_decode($base64String);
 
                         if ($imageData === false) {
-                            Log::error('Failed to decode base64 proof of payment at index ' . $index);
                             continue;
                         }
 
@@ -715,7 +661,6 @@ class CartController extends Controller
                         Storage::disk('public')->put('proofs/' . $filename, $imageData);
 
                         $savedPaths[] = 'proofs/' . $filename;
-                        Log::info('Proof of payment saved as file: proofs/' . $filename);
                     }
 
                     // Store as JSON array if multiple files, otherwise as single string for backward compatibility
@@ -724,12 +669,7 @@ class CartController extends Controller
                     } elseif (count($savedPaths) === 1) {
                         $proofOfPaymentPath = $savedPaths[0];
                     }
-
-                    if ($proofOfPaymentPath) {
-                        Log::info('All proof of payment files saved. Total: ' . count($savedPaths));
-                    }
                 } catch (\Exception $e) {
-                    Log::error('Failed to save proof of payment as file: ' . $e->getMessage());
                     // Continue without proof file - validation will handle missing proof
                 }
             }
@@ -748,7 +688,6 @@ class CartController extends Controller
             } elseif ($isAdminOrStaff && $skipPayment) {
                 // Admin/Staff explicitly skipped payment - keep as unpaid
                 $paymentStatus = 'unpaid';
-                Log::info('Admin/Staff skipped payment for transaction ' . $cartTransaction->id);
             }
 
             // Update the existing cart transaction with payment info
@@ -760,8 +699,6 @@ class CartController extends Controller
                 'proof_of_payment' => $proofOfPaymentPath, // Now stores file path, not base64
                 'paid_at' => $paidAt
             ]);
-
-            Log::info('Cart transaction updated with ID: ' . $cartTransaction->id);
 
             // Create bookings from grouped items
             $createdBookings = [];
@@ -807,8 +744,6 @@ class CartController extends Controller
                     ], 409);
                 }
 
-                Log::info('Creating booking for group: ' . json_encode($group));
-
                 // Get the first cart item from this group to extract admin booking fields
                 $firstCartItem = CartItem::whereIn('id', $group['items'])->first();
 
@@ -832,8 +767,6 @@ class CartController extends Controller
                     'admin_notes' => $firstCartItem->admin_notes,
                 ]);
 
-                Log::info('Booking created with ID: ' . $booking->id);
-
                 $createdBookings[] = $booking->load(['user', 'court', 'sport', 'court.images', 'cartTransaction']);
 
                 // Broadcast booking created event in real-time
@@ -844,7 +777,6 @@ class CartController extends Controller
             if ($request->has('selected_items') && !empty($request->selected_items)) {
                 // Mark only selected items as completed
                 CartItem::whereIn('id', $request->selected_items)->update(['status' => 'completed']);
-                Log::info('Marked selected cart items as completed');
 
                 // Check if there are remaining pending items in the original transaction
                 $remainingItems = CartItem::where('cart_transaction_id', $cartTransaction->id)
@@ -870,19 +802,13 @@ class CartController extends Controller
                     CartItem::where('cart_transaction_id', $cartTransaction->id)
                         ->where('status', 'pending')
                         ->update(['cart_transaction_id' => $newTransaction->id]);
-
-                    Log::info('Created new pending transaction for remaining items: ' . $newTransaction->id);
                 }
             } else {
                 // Full checkout - mark all items as completed
                 CartItem::where('cart_transaction_id', $cartTransaction->id)->update(['status' => 'completed']);
-                Log::info('Marked all cart items as completed');
             }
 
-            Log::info('Created ' . count($createdBookings) . ' bookings total');
-
             DB::commit();
-            Log::info('Transaction committed successfully');
 
             return response()->json([
                 'message' => 'Checkout successful',
@@ -892,8 +818,6 @@ class CartController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Checkout failed: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json([
                 'message' => 'Checkout failed',
                 'error' => $e->getMessage(),
@@ -1220,14 +1144,6 @@ class CartController extends Controller
                     $cartTransaction->update([
                         'total_price' => max(0, $newTotal)
                     ]);
-
-                    Log::info('Admin deleted cart item', [
-                        'cart_item_id' => $id,
-                        'transaction_id' => $transactionId,
-                        'removed_price' => $price,
-                        'new_total' => $newTotal,
-                        'admin_id' => $request->user()->id
-                    ]);
                 }
             }
 
@@ -1240,12 +1156,6 @@ class CartController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Failed to delete cart item', [
-                'cart_item_id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete time slot: ' . $e->getMessage()

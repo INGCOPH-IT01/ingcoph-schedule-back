@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
 
 class UserController extends Controller
 {
@@ -17,20 +16,13 @@ class UserController extends Controller
     public function index(Request $request)
     {
         try {
-            Log::info('Fetching users - Request by user ID: ' . ($request->user() ? $request->user()->id : 'none'));
-            Log::info('User role: ' . ($request->user() ? $request->user()->role : 'none'));
-
             $users = User::orderBy('created_at', 'desc')->get();
-
-            Log::info('Successfully fetched ' . $users->count() . ' users');
 
             return response()->json([
                 'success' => true,
                 'data' => $users
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching users: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch users: ' . $e->getMessage()
@@ -70,15 +62,12 @@ class UserController extends Controller
                 'phone' => $request->phone,
             ]);
 
-            Log::info('User created by admin: ' . $user->id . ' - ' . $user->email . ' - Type: ' . $user->role);
-
             return response()->json([
                 'success' => true,
                 'message' => 'User created successfully',
                 'data' => $user
             ], 201);
         } catch (\Exception $e) {
-            Log::error('Error creating user: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create user: ' . $e->getMessage()
@@ -159,15 +148,12 @@ class UserController extends Controller
 
             $user->update($updateData);
 
-            Log::info('User updated by admin: ' . $user->id . ' - ' . $user->email);
-
             return response()->json([
                 'success' => true,
                 'message' => 'User updated successfully',
                 'data' => $user
             ]);
         } catch (\Exception $e) {
-            Log::error('Error updating user: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update user: ' . $e->getMessage()
@@ -192,8 +178,6 @@ class UserController extends Controller
                 ], 403);
             }
 
-            Log::info('User deleted by admin: ' . $user->id . ' - ' . $user->email);
-
             $user->delete();
 
             return response()->json([
@@ -201,7 +185,6 @@ class UserController extends Controller
                 'message' => 'User deleted successfully'
             ]);
         } catch (\Exception $e) {
-            Log::error('Error deleting user: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete user'
@@ -227,7 +210,6 @@ class UserController extends Controller
                 'data' => $stats
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching user stats: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch statistics'

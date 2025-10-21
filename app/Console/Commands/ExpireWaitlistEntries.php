@@ -5,7 +5,6 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Models\BookingWaitlist;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
 
 class ExpireWaitlistEntries extends Command
 {
@@ -40,19 +39,8 @@ class ExpireWaitlistEntries extends Command
             try {
                 $entry->markAsExpired();
                 $count++;
-
-                Log::info('Waitlist entry expired', [
-                    'waitlist_id' => $entry->id,
-                    'user_id' => $entry->user_id,
-                    'court_id' => $entry->court_id,
-                    'start_time' => $entry->start_time,
-                    'end_time' => $entry->end_time
-                ]);
             } catch (\Exception $e) {
-                Log::error('Failed to expire waitlist entry', [
-                    'waitlist_id' => $entry->id,
-                    'error' => $e->getMessage()
-                ]);
+                // Continue processing other entries
             }
         }
 
