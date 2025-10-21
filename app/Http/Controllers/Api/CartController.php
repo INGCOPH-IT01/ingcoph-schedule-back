@@ -9,6 +9,7 @@ use App\Models\Court;
 use App\Models\Booking;
 use App\Models\BookingWaitlist;
 use App\Events\BookingCreated;
+use App\Helpers\BusinessHoursHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -57,27 +58,31 @@ class CartController extends Controller
     }
 
     /**
-     * Check and expire cart items that have been pending for more than 1 hour
+     * Check and expire cart items based on business hours rules
      * Admin bookings are excluded from automatic expiration
      */
     private function checkAndExpireCartItems($userId)
     {
         try {
-            $oneHourAgo = \Carbon\Carbon::now()->subHour();
-
-            // Find all pending cart transactions for this user that are older than 1 hour
+            // Find all pending cart transactions for this user
             // Load the user relationship to check if admin
-            $expiredTransactions = CartTransaction::with('user')
+            $pendingTransactions = CartTransaction::with('user')
                 ->where('user_id', $userId)
                 ->where('status', 'pending')
                 ->where('payment_status', 'unpaid')
-                ->where('created_at', '<', $oneHourAgo)
                 ->get();
 
-            foreach ($expiredTransactions as $transaction) {
+            foreach ($pendingTransactions as $transaction) {
                 // Skip admin bookings - they should not expire automatically
                 if ($transaction->user && $transaction->user->isAdmin()) {
                     Log::info("Skipped admin cart transaction #{$transaction->id} from expiration");
+                    continue;
+                }
+
+                // Check if transaction has expired based on business hours
+                $createdAt = \Carbon\Carbon::parse($transaction->created_at);
+
+                if (!BusinessHoursHelper::isExpired($createdAt)) {
                     continue;
                 }
 
@@ -89,7 +94,7 @@ class CartController extends Controller
                 // Mark the transaction as expired
                 $transaction->update(['status' => 'expired']);
 
-                Log::info("Auto-expired cart transaction #{$transaction->id} for user #{$userId}");
+                Log::info("Auto-expired cart transaction #{$transaction->id} for user #{$userId} (business hours)");
             }
         } catch (\Exception $e) {
             Log::error("Failed to auto-expire cart items for user #{$userId}: " . $e->getMessage());
@@ -508,6 +513,55 @@ class CartController extends Controller
 
         return response()->json([
             'count' => $count
+        ]);
+    }
+
+    /**
+     * Get expiration info for a cart transaction (supports business hours logic)
+     */
+    public function getExpirationInfo(Request $request)
+    {
+        $cartTransaction = CartTransaction::with('user')
+            ->where('user_id', $request->user()->id)
+            ->where('status', 'pending')
+            ->where('payment_status', 'unpaid')
+            ->first();
+
+        if (!$cartTransaction) {
+            return response()->json([
+                'success' => true,
+                'has_transaction' => false
+            ]);
+        }
+
+        // Check if admin user
+        if ($cartTransaction->user && $cartTransaction->user->isAdmin()) {
+            return response()->json([
+                'success' => true,
+                'has_transaction' => true,
+                'is_admin' => true,
+                'expires_at' => null,
+                'time_remaining_seconds' => null,
+                'time_remaining_formatted' => 'No expiration (Admin)',
+                'is_expired' => false
+            ]);
+        }
+
+        $createdAt = \Carbon\Carbon::parse($cartTransaction->created_at);
+        $expirationTime = BusinessHoursHelper::calculateExpirationTime($createdAt);
+        $isExpired = BusinessHoursHelper::isExpired($createdAt);
+        $timeRemainingSeconds = BusinessHoursHelper::getTimeRemainingSeconds($createdAt);
+        $timeRemainingFormatted = BusinessHoursHelper::getTimeRemainingFormatted($createdAt);
+
+        return response()->json([
+            'success' => true,
+            'has_transaction' => true,
+            'is_admin' => false,
+            'created_at' => $createdAt->toIso8601String(),
+            'expires_at' => $expirationTime->toIso8601String(),
+            'time_remaining_seconds' => $timeRemainingSeconds,
+            'time_remaining_formatted' => $timeRemainingFormatted,
+            'is_expired' => $isExpired
         ]);
     }
 
@@ -1060,6 +1114,17 @@ class CartController extends Controller
         $cartItem->update([
             'court_id' => $request->court_id
         ]);
+
+        // Also update any related booking records with the same cart_transaction_id and time slot
+        // This ensures availability checks show the correct status
+        if ($cartItem->cart_transaction_id) {
+            Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
+                ->where('start_time', $bookingDate . ' ' . $cartItem->start_time)
+                ->where('end_time', $endDateTime)
+                ->update([
+                    'court_id' => $request->court_id
+                ]);
+        }
 
         // Refresh the cart item from database to ensure we have the latest data
         $cartItem->refresh();

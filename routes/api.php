@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\CartTransactionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\CompanySettingController;
+use App\Http\Controllers\Api\HolidayController;
 
 /*
 |--------------------------------------------------------------------------
@@ -71,6 +72,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Cart routes
     Route::get('/cart', [CartController::class, 'index']);
     Route::get('/cart/count', [CartController::class, 'count']);
+    Route::get('/cart/expiration-info', [CartController::class, 'getExpirationInfo']);
     Route::post('/cart', [CartController::class, 'store']);
     Route::delete('/cart/{id}', [CartController::class, 'destroy']);
     Route::delete('/cart', [CartController::class, 'clear']);
@@ -151,5 +153,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
         Route::delete('/admin/company-settings/payment-qr-code', [CompanySettingController::class, 'deletePaymentQrCode']);
+
+        // Admin holiday management routes
+        Route::get('/admin/holidays', [HolidayController::class, 'index']);
+        Route::get('/admin/holidays/year/{year}', [HolidayController::class, 'getForYear']);
+        Route::post('/admin/holidays', [HolidayController::class, 'store']);
+        Route::put('/admin/holidays/{id}', [HolidayController::class, 'update']);
+        Route::delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
+        Route::post('/admin/holidays/check-date', [HolidayController::class, 'checkDate']);
     });
 });

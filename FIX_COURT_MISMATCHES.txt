@@ -1,0 +1,35 @@
+===============================================
+Quick Guide: Fix Booking Court Mismatches
+===============================================
+
+BEFORE YOU START:
+1. Backup your database!
+2. Run on staging first if possible
+
+STEP 1: Navigate to backend folder
+cd /Users/karloalfonso/Documents/GitHub/schedule/ingcoph-schedule-back
+
+STEP 2: Run the seeder
+php artisan db:seed --class=FixBookingCourtsSeeder
+
+STEP 3: Review the preview
+- Check which bookings will be updated
+- Verify the changes make sense
+
+STEP 4: Confirm the update
+- Type "yes" when prompted
+- Wait for completion
+
+STEP 5: Verify
+- Check that message shows: "All bookings are now in sync"
+- Test in the application
+
+WHAT IT FIXES:
+- Updates bookings.court_id to match cart_items.court_id
+- Fixes availability display issues
+- Corrects historical data from before the bug fix
+
+For detailed documentation, see:
+docs/FIX_BOOKING_COURTS_SEEDER.md
+
+===============================================
