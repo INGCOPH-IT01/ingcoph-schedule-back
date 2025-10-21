@@ -1274,4 +1274,72 @@ class BookingController extends Controller
             'data' => $booking->load(['user', 'court', 'sport'])
         ]);
     }
+
+    /**
+     * Resend confirmation email for an approved booking
+     */
+    public function resendConfirmationEmail(Request $request, string $id)
+    {
+        $booking = Booking::with(['user', 'court.sport'])->find($id);
+
+        if (!$booking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Booking not found'
+            ], 404);
+        }
+
+        // Check if user owns this booking, is the booking_for_user, is admin, or is staff
+        $isBookingOwner = $booking->user_id === $request->user()->id;
+        $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
+        $isAdmin = $request->user()->isAdmin();
+        $isStaff = $request->user()->isStaff();
+
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin && !$isStaff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to resend confirmation email for this booking'
+            ], 403);
+        }
+
+        // Only approved bookings should receive confirmation emails
+        if ($booking->status !== Booking::STATUS_APPROVED) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Confirmation email can only be sent for approved bookings'
+            ], 400);
+        }
+
+        // Determine which email to send to
+        $recipientEmail = $booking->user->email;
+        if ($booking->booking_for_user_id && $booking->bookingForUser) {
+            $recipientEmail = $booking->bookingForUser->email;
+        }
+
+        // Send confirmation email
+        try {
+            Mail::to($recipientEmail)->send(new BookingApprovalMail($booking));
+            Log::info('Booking confirmation email resent successfully', [
+                'booking_id' => $booking->id,
+                'recipient_email' => $recipientEmail,
+                'resent_by' => $request->user()->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Confirmation email sent successfully to ' . $recipientEmail
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to resend booking confirmation email', [
+                'booking_id' => $booking->id,
+                'recipient_email' => $recipientEmail,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
