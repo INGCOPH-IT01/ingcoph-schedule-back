@@ -73,15 +73,8 @@ class CartController extends Controller
                 ->get();
 
             foreach ($pendingTransactions as $transaction) {
-                // Skip admin bookings - they should not expire automatically
-                if ($transaction->user && $transaction->user->isAdmin()) {
-                    continue;
-                }
-
-                // Check if transaction has expired based on business hours
-                $createdAt = \Carbon\Carbon::parse($transaction->created_at);
-
-                if (!BusinessHoursHelper::isExpired($createdAt)) {
+                // Use universal helper to check if transaction should expire
+                if (!BusinessHoursHelper::shouldExpire($transaction)) {
                     continue;
                 }
 
@@ -495,15 +488,28 @@ class CartController extends Controller
             ]);
         }
 
-        // Check if admin user
-        if ($cartTransaction->user && $cartTransaction->user->isAdmin()) {
+        // Check if transaction is exempt from expiration using universal helper
+        if (BusinessHoursHelper::isExemptFromExpiration($cartTransaction)) {
+            // Determine the reason for exemption
+            $reason = 'No expiration';
+            if ($cartTransaction->user && $cartTransaction->user->isAdmin()) {
+                $reason = 'No expiration (Admin)';
+            } elseif ($cartTransaction->approval_status === 'approved') {
+                $reason = 'No expiration (Approved)';
+            } elseif ($cartTransaction->proof_of_payment) {
+                $reason = 'No expiration (Proof of payment uploaded)';
+            }
+
             return response()->json([
                 'success' => true,
                 'has_transaction' => true,
-                'is_admin' => true,
+                'is_exempt' => true,
+                'is_admin' => $cartTransaction->user && $cartTransaction->user->isAdmin(),
+                'is_approved' => $cartTransaction->approval_status === 'approved',
+                'has_proof_of_payment' => (bool) $cartTransaction->proof_of_payment,
                 'expires_at' => null,
                 'time_remaining_seconds' => null,
-                'time_remaining_formatted' => 'No expiration (Admin)',
+                'time_remaining_formatted' => $reason,
                 'is_expired' => false
             ]);
         }
