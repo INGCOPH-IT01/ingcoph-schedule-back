@@ -28,5 +28,8 @@ class AppServiceProvider extends ServiceProvider
         if (config('app.env') === 'production' || env('FORCE_HTTPS', false)) {
             URL::forceScheme('https');
         }
+
+        // Register model observers for automatic data synchronization
+        \App\Models\CartItem::observe(\App\Observers\CartItemObserver::class);
     }
 }

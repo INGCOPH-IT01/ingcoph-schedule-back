@@ -407,6 +407,8 @@ class CartController extends Controller
                 }
             }
 
+            // Note: CartItemObserver will automatically sync related bookings
+
             DB::commit();
 
             return response()->json([
@@ -1194,6 +1196,8 @@ class CartController extends Controller
                     ]);
                 }
             }
+
+            // Note: CartItemObserver will automatically sync related bookings
 
             DB::commit();
 

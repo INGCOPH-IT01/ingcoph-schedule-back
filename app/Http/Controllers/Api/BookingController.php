@@ -677,11 +677,9 @@ class BookingController extends Controller
             $endTime = $startOfDay->copy()->setHour((int)$closeHour)->setMinute((int)$closeMinute)->setSecond(0);
         }
 
-        $addedBookingIds = []; // Track which bookings we've already added
-        $addedCartItemIds = []; // Track which cart items we've already added
-
+        // Always generate 1-hour increment slots
         while ($currentTime->lt($endTime)) {
-            $slotEnd = $currentTime->copy()->addHours($duration);
+            $slotEnd = $currentTime->copy()->addHour(); // Always 1-hour slots
 
             // Check if the slot end time exceeds the court's operating hours
             if ($slotEnd->gt($endTime)) {
@@ -717,20 +715,20 @@ class BookingController extends Controller
                     'start_time' => $currentTime->format('Y-m-d H:i:s'),
                     'end_time' => $slotEnd->format('Y-m-d H:i:s'),
                     'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
-                    'duration_hours' => $duration,
+                    'duration_hours' => 1,
                     'price' => $price,
                     'available' => true,
                     'is_booked' => false
                 ];
             } else {
                 // Prioritize cart items over old booking records (new system uses cart items)
-                // Only show one booked slot per time period to avoid duplicates
-                if ($conflictingCartItem && !in_array($conflictingCartItem->id, $addedCartItemIds)) {
+                // Show booking info for each 1-hour slot that is covered by the booking
+                if ($conflictingCartItem) {
                     $cartStart = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time);
                     $cartEnd = Carbon::createFromFormat('Y-m-d H:i:s', $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time);
                     $cartDuration = $cartEnd->diffInHours($cartStart);
-                    // Use time-based pricing for cart items display
-                    $cartPrice = $court->sport->calculatePriceForRange($cartStart, $cartEnd);
+                    // Use time-based pricing for this 1-hour slot
+                    $cartPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
 
                     // Check approval status and payment status
                     $approvalStatus = $conflictingCartItem->cartTransaction->approval_status ?? 'pending';
@@ -763,13 +761,14 @@ class BookingController extends Controller
                     $createdByUser = $transaction->user;
                     $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
 
+                    // Show current 1-hour slot with booking info
                     $availableSlots[] = [
-                        'start' => $cartStart->format('H:i'),
-                        'end' => $cartEnd->format('H:i'),
-                        'start_time' => $date->format('Y-m-d') . ' ' . $conflictingCartItem->start_time,
-                        'end_time' => $date->format('Y-m-d') . ' ' . $conflictingCartItem->end_time,
-                        'formatted_time' => $cartStart->format('H:i') . ' - ' . $cartEnd->format('H:i'),
-                        'duration_hours' => $cartDuration,
+                        'start' => $currentTime->format('H:i'),
+                        'end' => $slotEnd->format('H:i'),
+                        'start_time' => $currentTime->format('Y-m-d H:i:s'),
+                        'end_time' => $slotEnd->format('Y-m-d H:i:s'),
+                        'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
+                        'duration_hours' => 1,
                         'price' => $cartPrice,
                         'available' => false,
                         'is_booked' => $isApproved && $isPaid, // Only true if approved AND paid
@@ -799,17 +798,19 @@ class BookingController extends Controller
                             'id' => $createdByUser->id,
                             'name' => $createdByUser->name,
                             'role' => $createdByUser->role
-                        ] : null
+                        ] : null,
+                        // Additional info about the full booking
+                        'full_booking_start' => $cartStart->format('H:i'),
+                        'full_booking_end' => $cartEnd->format('H:i'),
+                        'full_booking_duration' => $cartDuration
                     ];
-
-                    $addedCartItemIds[] = $conflictingCartItem->id;
-                } elseif ($conflictingBooking && !in_array($conflictingBooking->id, $addedBookingIds)) {
+                } elseif ($conflictingBooking) {
                     // Only show old booking records if there's no cart item for this time slot
                     $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
                     $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
                     $bookingDuration = $bookingEnd->diffInHours($bookingStart);
-                    // Use time-based pricing for existing bookings display
-                    $bookingPrice = $court->sport->calculatePriceForRange($bookingStart, $bookingEnd);
+                    // Use time-based pricing for this 1-hour slot
+                    $bookingPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
 
                     // Check booking status and payment status
                     $bookingStatus = $conflictingBooking->status ?? 'pending';
@@ -831,13 +832,14 @@ class BookingController extends Controller
                     $bookingCreatedByUser = $conflictingBooking->user;
                     $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
 
+                    // Show current 1-hour slot with booking info
                     $availableSlots[] = [
-                        'start' => $bookingStart->format('H:i'),
-                        'end' => $bookingEnd->format('H:i'),
-                        'start_time' => $conflictingBooking->start_time,
-                        'end_time' => $conflictingBooking->end_time,
-                        'formatted_time' => $bookingStart->format('H:i') . ' - ' . $bookingEnd->format('H:i'),
-                        'duration_hours' => $bookingDuration,
+                        'start' => $currentTime->format('H:i'),
+                        'end' => $slotEnd->format('H:i'),
+                        'start_time' => $currentTime->format('Y-m-d H:i:s'),
+                        'end_time' => $slotEnd->format('Y-m-d H:i:s'),
+                        'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
+                        'duration_hours' => 1,
                         'price' => $bookingPrice,
                         'available' => false,
                         'is_booked' => $isBookingApproved && $isBookingPaid,
@@ -866,10 +868,12 @@ class BookingController extends Controller
                             'id' => $bookingCreatedByUser->id,
                             'name' => $bookingCreatedByUser->name,
                             'role' => $bookingCreatedByUser->role
-                        ] : null
+                        ] : null,
+                        // Additional info about the full booking
+                        'full_booking_start' => $bookingStart->format('H:i'),
+                        'full_booking_end' => $bookingEnd->format('H:i'),
+                        'full_booking_duration' => $bookingDuration
                     ];
-
-                    $addedBookingIds[] = $conflictingBooking->id;
                 }
             }
 

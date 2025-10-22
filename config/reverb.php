@@ -81,6 +81,8 @@ return [
                     'port' => env('REVERB_PORT', 443),
                     'scheme' => env('REVERB_SCHEME', 'https'),
                     'useTLS' => env('REVERB_SCHEME', 'https') === 'https',
+                    'local_cert' => env('REVERB_LOCAL_CERT'),
+                    'local_pk' => env('REVERB_LOCAL_PK'),
                 ],
                 'allowed_origins' => ['*'],
                 'ping_interval' => env('REVERB_APP_PING_INTERVAL', 60),
