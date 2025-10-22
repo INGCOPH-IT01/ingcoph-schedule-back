@@ -960,7 +960,10 @@ class CartController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'court_id' => 'required|exists:courts,id'
+            'court_id' => 'sometimes|required|exists:courts,id',
+            'booking_date' => 'sometimes|required|date',
+            'start_time' => 'sometimes|required|date_format:H:i',
+            'end_time' => 'sometimes|required|date_format:H:i'
         ]);
 
         if ($validator->fails()) {
@@ -971,10 +974,16 @@ class CartController extends Controller
             ], 422);
         }
 
-        // Get the new court
-        $newCourt = Court::find($request->court_id);
+        // Use new values if provided, otherwise use existing values
+        $courtId = $request->has('court_id') ? $request->court_id : $cartItem->court_id;
+        $bookingDate = $request->has('booking_date') ? \Carbon\Carbon::parse($request->booking_date)->format('Y-m-d') : \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+        $startTime = $request->has('start_time') ? $request->start_time : $cartItem->start_time;
+        $endTime = $request->has('end_time') ? $request->end_time : $cartItem->end_time;
 
-        if (!$newCourt || !$newCourt->is_active) {
+        // Get the court
+        $court = Court::find($courtId);
+
+        if (!$court || !$court->is_active) {
             return response()->json([
                 'success' => false,
                 'message' => 'Selected court is not available'
@@ -982,20 +991,18 @@ class CartController extends Controller
         }
 
         // Create full datetime for conflict checking
-        // Ensure we only have the date part (booking_date might be a full datetime or just a date)
-        $bookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
-        $startDateTime = $bookingDate . ' ' . $cartItem->start_time;
-        $endDateTime = $bookingDate . ' ' . $cartItem->end_time;
+        $startDateTime = $bookingDate . ' ' . $startTime;
+        $endDateTime = $bookingDate . ' ' . $endTime;
 
         // Handle midnight crossing
-        $startTime = \Carbon\Carbon::parse($startDateTime);
-        $endTime = \Carbon\Carbon::parse($endDateTime);
-        if ($endTime->lte($startTime)) {
-            $endDateTime = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d') . ' ' . $cartItem->end_time;
+        $startTimeParsed = \Carbon\Carbon::parse($startDateTime);
+        $endTimeParsed = \Carbon\Carbon::parse($endDateTime);
+        if ($endTimeParsed->lte($startTimeParsed)) {
+            $endDateTime = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d') . ' ' . $endTime;
         }
 
         // Check for conflicts on the new court
-        $conflictingBooking = Booking::where('court_id', $request->court_id)
+        $conflictingBooking = Booking::where('court_id', $courtId)
             ->whereIn('status', ['pending', 'approved', 'completed'])
             ->where(function ($query) use ($startDateTime, $endDateTime) {
                 $query->where(function ($q) use ($startDateTime, $endDateTime) {
@@ -1021,8 +1028,8 @@ class CartController extends Controller
             ], 409);
         }
 
-        // Check for conflicts with other cart items on the new court
-        $conflictingCartItem = CartItem::where('court_id', $request->court_id)
+        // Check for conflicts with other cart items on the court
+        $conflictingCartItem = CartItem::where('court_id', $courtId)
             ->where('id', '!=', $id)
             ->where('booking_date', $bookingDate)
             ->where('status', '!=', 'cancelled')
@@ -1030,16 +1037,16 @@ class CartController extends Controller
                 $query->whereIn('approval_status', ['pending', 'approved'])
                       ->whereIn('payment_status', ['unpaid', 'paid']);
             })
-            ->where(function ($query) use ($cartItem) {
-                $query->where(function ($q) use ($cartItem) {
-                    $q->where('start_time', '>=', $cartItem->start_time)
-                      ->where('start_time', '<', $cartItem->end_time);
-                })->orWhere(function ($q) use ($cartItem) {
-                    $q->where('end_time', '>', $cartItem->start_time)
-                      ->where('end_time', '<=', $cartItem->end_time);
-                })->orWhere(function ($q) use ($cartItem) {
-                    $q->where('start_time', '<=', $cartItem->start_time)
-                      ->where('end_time', '>=', $cartItem->end_time);
+            ->where(function ($query) use ($startTime, $endTime) {
+                $query->where(function ($q) use ($startTime, $endTime) {
+                    $q->where('start_time', '>=', $startTime)
+                      ->where('start_time', '<', $endTime);
+                })->orWhere(function ($q) use ($startTime, $endTime) {
+                    $q->where('end_time', '>', $startTime)
+                      ->where('end_time', '<=', $endTime);
+                })->orWhere(function ($q) use ($startTime, $endTime) {
+                    $q->where('start_time', '<=', $startTime)
+                      ->where('end_time', '>=', $endTime);
                 });
             })
             ->first();
@@ -1051,20 +1058,61 @@ class CartController extends Controller
             ], 409);
         }
 
+        // Store old values for updating related bookings
+        $oldBookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+        $oldStartTime = $cartItem->start_time;
+        $oldEndTime = $cartItem->end_time;
+        $oldCourtId = $cartItem->court_id;
+
+        // Prepare update data
+        $updateData = [];
+        if ($request->has('court_id')) {
+            $updateData['court_id'] = $courtId;
+        }
+        if ($request->has('booking_date')) {
+            $updateData['booking_date'] = $bookingDate;
+        }
+        if ($request->has('start_time')) {
+            $updateData['start_time'] = $startTime;
+        }
+        if ($request->has('end_time')) {
+            $updateData['end_time'] = $endTime;
+        }
+
         // Update the cart item
-        $cartItem->update([
-            'court_id' => $request->court_id
-        ]);
+        $cartItem->update($updateData);
 
         // Also update any related booking records with the same cart_transaction_id and time slot
         // This ensures availability checks show the correct status
         if ($cartItem->cart_transaction_id) {
-            Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
-                ->where('start_time', $bookingDate . ' ' . $cartItem->start_time)
-                ->where('end_time', $endDateTime)
-                ->update([
-                    'court_id' => $request->court_id
-                ]);
+            $oldStartDateTime = $oldBookingDate . ' ' . $oldStartTime;
+            $oldEndDateTime = $oldBookingDate . ' ' . $oldEndTime;
+
+            // Handle midnight crossing for old times
+            $oldStartTimeParsed = \Carbon\Carbon::parse($oldStartDateTime);
+            $oldEndTimeParsed = \Carbon\Carbon::parse($oldEndDateTime);
+            if ($oldEndTimeParsed->lte($oldStartTimeParsed)) {
+                $oldEndDateTime = \Carbon\Carbon::parse($oldBookingDate)->addDay()->format('Y-m-d') . ' ' . $oldEndTime;
+            }
+
+            $bookingUpdateData = [];
+            if ($request->has('court_id')) {
+                $bookingUpdateData['court_id'] = $courtId;
+            }
+            if ($request->has('booking_date') || $request->has('start_time')) {
+                $bookingUpdateData['start_time'] = $startDateTime;
+            }
+            if ($request->has('booking_date') || $request->has('end_time')) {
+                $bookingUpdateData['end_time'] = $endDateTime;
+            }
+
+            if (!empty($bookingUpdateData)) {
+                Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
+                    ->where('court_id', $oldCourtId)
+                    ->where('start_time', $oldStartDateTime)
+                    ->where('end_time', $oldEndDateTime)
+                    ->update($bookingUpdateData);
+            }
         }
 
         // Refresh the cart item from database to ensure we have the latest data

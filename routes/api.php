@@ -78,10 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/cart', [CartController::class, 'clear']);
     Route::post('/cart/checkout', [CartController::class, 'checkout']);
 
-    // Cart item routes (admin only)
-    Route::get('/cart-items/{id}/available-courts', [CartController::class, 'getAvailableCourts'])->middleware('admin');
-    Route::put('/cart-items/{id}', [CartController::class, 'updateCartItem'])->middleware('admin');
-    Route::delete('/cart-items/{id}', [CartController::class, 'deleteCartItem'])->middleware('admin');
+    // Cart item routes (admin only) - moved to admin group below
 
     // Cart Transaction routes
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
@@ -144,6 +141,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/cart-transactions/{id}/approve', [CartTransactionController::class, 'approve']);
         Route::post('/admin/cart-transactions/{id}/reject', [CartTransactionController::class, 'reject']);
         Route::patch('/admin/cart-transactions/{id}/attendance-status', [CartTransactionController::class, 'updateAttendanceStatus']);
+
+        // Admin cart item routes
+        Route::get('/admin/cart-items/{id}/available-courts', [CartController::class, 'getAvailableCourts']);
+        Route::put('/admin/cart-items/{id}', [CartController::class, 'updateCartItem']);
+        Route::delete('/admin/cart-items/{id}', [CartController::class, 'deleteCartItem']);
 
         // Admin user management routes
         Route::get('/admin/users', [UserController::class, 'index']);
