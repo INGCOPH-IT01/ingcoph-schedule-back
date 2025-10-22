@@ -26,13 +26,14 @@ class CartController extends Controller
         // First, check and expire any cart items older than 1 hour
         $this->checkAndExpireCartItems($request->user()->id);
 
-        // Get ALL pending cart transactions for the user
+        // Get ALL pending cart transactions for the user (exclude rejected transactions)
         $cartTransactions = CartTransaction::with(['cartItems' => function($query) {
                 $query->where('status', 'pending');
             }, 'cartItems.court', 'cartItems.sport', 'cartItems.court.images', 'cartItems.bookingForUser', 'user'])
             ->where('user_id', $request->user()->id)
             ->where('status', 'pending')
             ->where('payment_status', 'unpaid')
+            ->whereIn('approval_status', ['pending', 'approved'])
             ->orderBy('created_at', 'asc')
             ->get();
 
@@ -73,15 +74,8 @@ class CartController extends Controller
                 ->get();
 
             foreach ($pendingTransactions as $transaction) {
-                // Skip admin bookings - they should not expire automatically
-                if ($transaction->user && $transaction->user->isAdmin()) {
-                    continue;
-                }
-
-                // Check if transaction has expired based on business hours
-                $createdAt = \Carbon\Carbon::parse($transaction->created_at);
-
-                if (!BusinessHoursHelper::isExpired($createdAt)) {
+                // Use universal helper to check if transaction should expire
+                if (!BusinessHoursHelper::shouldExpire($transaction)) {
                     continue;
                 }
 
@@ -432,10 +426,11 @@ class CartController extends Controller
         try {
             DB::beginTransaction();
 
-            // Find pending cart transaction
+            // Find pending cart transaction (exclude rejected transactions)
             $cartTransaction = CartTransaction::where('user_id', $request->user()->id)
                 ->where('status', 'pending')
                 ->where('payment_status', 'unpaid')
+                ->whereIn('approval_status', ['pending', 'approved'])
                 ->first();
 
             if ($cartTransaction) {
@@ -468,6 +463,7 @@ class CartController extends Controller
         $cartTransaction = CartTransaction::where('user_id', $request->user()->id)
             ->where('status', 'pending')
             ->where('payment_status', 'unpaid')
+            ->whereIn('approval_status', ['pending', 'approved'])
             ->first();
 
         $count = $cartTransaction ? $cartTransaction->cartItems()->where('status', 'pending')->count() : 0;
@@ -486,6 +482,7 @@ class CartController extends Controller
             ->where('user_id', $request->user()->id)
             ->where('status', 'pending')
             ->where('payment_status', 'unpaid')
+            ->whereIn('approval_status', ['pending', 'approved'])
             ->first();
 
         if (!$cartTransaction) {
@@ -495,15 +492,28 @@ class CartController extends Controller
             ]);
         }
 
-        // Check if admin user
-        if ($cartTransaction->user && $cartTransaction->user->isAdmin()) {
+        // Check if transaction is exempt from expiration using universal helper
+        if (BusinessHoursHelper::isExemptFromExpiration($cartTransaction)) {
+            // Determine the reason for exemption
+            $reason = 'No expiration';
+            if ($cartTransaction->user && $cartTransaction->user->isAdmin()) {
+                $reason = 'No expiration (Admin)';
+            } elseif ($cartTransaction->approval_status === 'approved') {
+                $reason = 'No expiration (Approved)';
+            } elseif ($cartTransaction->proof_of_payment) {
+                $reason = 'No expiration (Proof of payment uploaded)';
+            }
+
             return response()->json([
                 'success' => true,
                 'has_transaction' => true,
-                'is_admin' => true,
+                'is_exempt' => true,
+                'is_admin' => $cartTransaction->user && $cartTransaction->user->isAdmin(),
+                'is_approved' => $cartTransaction->approval_status === 'approved',
+                'has_proof_of_payment' => (bool) $cartTransaction->proof_of_payment,
                 'expires_at' => null,
                 'time_remaining_seconds' => null,
-                'time_remaining_formatted' => 'No expiration (Admin)',
+                'time_remaining_formatted' => $reason,
                 'is_expired' => false
             ]);
         }
@@ -557,10 +567,11 @@ class CartController extends Controller
 
             $userId = $request->user()->id;
 
-            // Find the pending cart transaction
+            // Find the pending cart transaction (exclude rejected transactions)
             $cartTransaction = CartTransaction::where('user_id', $userId)
                 ->where('status', 'pending')
                 ->where('payment_status', 'unpaid')
+                ->whereIn('approval_status', ['pending', 'approved'])
                 ->first();
 
             if (!$cartTransaction) {
@@ -569,9 +580,21 @@ class CartController extends Controller
                 ], 400);
             }
 
+            // Early validation: Check if transaction has been rejected
+            if ($cartTransaction->approval_status === 'rejected') {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'This booking has been rejected. Reason: ' . ($cartTransaction->rejection_reason ?? 'Not specified'),
+                    'error' => 'TRANSACTION_REJECTED',
+                    'rejection_reason' => $cartTransaction->rejection_reason
+                ], 422);
+            }
+
             // Get cart items - either selected ones or all items in transaction
+            // IMPORTANT: Only process items with status='pending' to avoid cancelled/expired items
             $cartItemsQuery = CartItem::with('court')
-                ->where('cart_transaction_id', $cartTransaction->id);
+                ->where('cart_transaction_id', $cartTransaction->id)
+                ->where('status', 'pending');
 
             if ($request->has('selected_items') && !empty($request->selected_items)) {
                 $cartItemsQuery->whereIn('id', $request->selected_items);

@@ -178,4 +178,62 @@ class BusinessHoursHelper
 
         return sprintf('%dm %ds', $minutes, $seconds);
     }
+
+    /**
+     * Check if a cart transaction should be exempt from expiration
+     *
+     * A transaction is exempt from expiration if:
+     * - Created by admin or staff user
+     * - Has proof of payment uploaded
+     * - Has been approved (approval_status === 'approved')
+     *
+     * This centralizes the expiration exemption logic to follow DRY principles.
+     *
+     * @param \App\Models\CartTransaction $transaction The cart transaction to check
+     * @return bool True if exempt from expiration, false if it should expire
+     */
+    public static function isExemptFromExpiration($transaction): bool
+    {
+        // Admin/staff bookings never expire
+        if ($transaction->user && $transaction->user->isAdmin()) {
+            return true;
+        }
+
+        // Bookings with proof of payment never expire
+        if ($transaction->proof_of_payment) {
+            return true;
+        }
+
+        // Approved bookings never expire
+        if ($transaction->approval_status === 'approved') {
+            return true;
+        }
+
+        // All other cases: should be subject to expiration
+        return false;
+    }
+
+    /**
+     * Check if a cart transaction should expire based on comprehensive rules
+     *
+     * This combines exemption checking with time-based expiration logic.
+     * Returns true only if the transaction:
+     * - Is NOT exempt from expiration AND
+     * - Has passed its expiration time
+     *
+     * @param \App\Models\CartTransaction $transaction The cart transaction to check
+     * @param Carbon|null $checkTime The time to check against (defaults to now)
+     * @return bool True if transaction should expire, false otherwise
+     */
+    public static function shouldExpire($transaction, ?Carbon $checkTime = null): bool
+    {
+        // First check if exempt from expiration
+        if (self::isExemptFromExpiration($transaction)) {
+            return false;
+        }
+
+        // If not exempt, check if time has expired
+        $createdAt = Carbon::parse($transaction->created_at);
+        return self::isExpired($createdAt, $checkTime);
+    }
 }

@@ -48,17 +48,14 @@ class CancelExpiredCartItems extends Command
             $skippedNotExpiredCount = 0;
 
             foreach ($pendingTransactions as $transaction) {
-                // Skip admin bookings - they should not expire automatically
-                if ($transaction->user && $transaction->user->isAdmin()) {
-                    $skippedAdminCount++;
-                    continue;
-                }
-
-                // Check if transaction has expired based on business hours
-                $createdAt = Carbon::parse($transaction->created_at);
-
-                if (!BusinessHoursHelper::isExpired($createdAt)) {
-                    $skippedNotExpiredCount++;
+                // Use universal helper to check if transaction should expire
+                if (!BusinessHoursHelper::shouldExpire($transaction)) {
+                    // Track why it was skipped
+                    if (BusinessHoursHelper::isExemptFromExpiration($transaction)) {
+                        $skippedAdminCount++;
+                    } else {
+                        $skippedNotExpiredCount++;
+                    }
                     continue;
                 }
 
