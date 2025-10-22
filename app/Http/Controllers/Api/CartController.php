@@ -187,9 +187,10 @@ class CartController extends Controller
                     $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
                 }
 
-                // Check for conflicting bookings
+                // Check for conflicting bookings - only check active bookings (exclude cancelled/rejected)
                 $conflictingBooking = Booking::where('court_id', $item['court_id'])
                     ->whereDate('start_time', $item['booking_date'])
+                    ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
                     ->where(function ($query) use ($startDateTime, $endDateTime) {
                         $query->where(function ($q) use ($startDateTime, $endDateTime) {
                             // Existing booking starts during new booking (exclusive boundaries)
@@ -719,8 +720,9 @@ class CartController extends Controller
                     $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
                 }
 
-                // Final availability check
+                // Final availability check - only check active bookings (exclude cancelled/rejected)
                 $isBooked = Booking::where('court_id', $group['court_id'])
+                    ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
                     ->where(function ($query) use ($startDateTime, $endDateTime) {
 
                         $query->where(function ($q) use ($startDateTime, $endDateTime) {
