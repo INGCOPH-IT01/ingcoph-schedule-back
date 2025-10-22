@@ -253,7 +253,7 @@ class BookingController extends Controller
         }
             if($request->status !== "cancelled"){
                     $validationRules = [
-                        'start_time' => 'required|date|after:now',
+                        'start_time' => 'required|date',
                         'end_time' => 'required|date|after:start_time',
                         'total_price' => 'required|numeric|min:0',
                         'status' => 'required|in:pending,approved,rejected,cancelled,completed,recurring_schedule',
@@ -1008,11 +1008,22 @@ class BookingController extends Controller
             ], 404);
         }
 
-        if ($booking->status !== 'pending') {
+        $isAdmin = $request->user()->isAdmin();
+
+        // Allow admins to reject approved bookings, regular users can only reject pending bookings
+        if ($booking->status !== 'pending' && $booking->status !== 'approved') {
             return response()->json([
                 'success' => false,
-                'message' => 'Only pending bookings can be rejected'
+                'message' => 'Only pending or approved bookings can be rejected'
             ], 400);
+        }
+
+        // If the booking is approved, only admins can reject it
+        if ($booking->status === 'approved' && !$isAdmin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only administrators can reject approved bookings'
+            ], 403);
         }
 
         $oldStatus = $booking->status;
