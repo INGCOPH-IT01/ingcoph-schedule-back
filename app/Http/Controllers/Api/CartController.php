@@ -221,46 +221,51 @@ class CartController extends Controller
                     ->with('cartTransaction.user')
                     ->get();
 
-                // Determine if the conflict is with a pending approval user booking
-                // Waitlist should only trigger when approval_status is 'pending' (not yet approved by admin)
+                // Determine if the conflict is with a pending approval booking
+                // Waitlist should trigger when any booking (admin or regular user) is 'pending' (not yet approved)
+                // The admin privilege is that they can BYPASS being waitlisted, but their pending bookings
+                // don't prevent others from being waitlisted
                 $isPendingApprovalBooking = false;
                 $pendingCartTransactionId = null;
+                $pendingBookingId = null;
 
                 if ($conflictingBooking &&
-                    $conflictingBooking->status === 'pending' &&
-                    $conflictingBooking->payment_status === 'unpaid') {
-                    // Check if it's from a regular user (not admin)
-                    $bookingUser = $conflictingBooking->user;
-                    if ($bookingUser && $bookingUser->role === 'user') {
-                        $isPendingApprovalBooking = true;
-                    }
+                    $conflictingBooking->status === 'pending') {
+                    // ANY pending booking (admin or regular user) triggers waitlist
+                    $isPendingApprovalBooking = true;
+                    $pendingBookingId = $conflictingBooking->id;
+                    $pendingCartTransactionId = $conflictingBooking->cart_transaction_id;
                 }
 
                 // Check cart items for pending approval bookings
-                // The key check is: approval_status in ['pending', 'pending_waitlist'] (not yet approved by admin)
-                // Both paid and unpaid pending bookings trigger waitlist
+                // ANY pending transaction (from admin or regular user) should trigger waitlist
                 foreach ($conflictingCartItems as $cartItem) {
                     $cartTrans = $cartItem->cartTransaction;
                     if ($cartTrans &&
-                        in_array($cartTrans->approval_status, ['pending', 'pending_waitlist']) &&  // Not yet approved by admin
-                        $cartTrans->user &&
-                        $cartTrans->user->role === 'user') {
+                        in_array($cartTrans->approval_status, ['pending', 'pending_waitlist'])) {
+                        // ANY user (admin or regular) with pending transaction triggers waitlist
                         $isPendingApprovalBooking = true;
                         $pendingCartTransactionId = $cartTrans->id;
+
+                        // Find the associated booking if it exists
+                        if (!$pendingBookingId) {
+                            $associatedBooking = Booking::where('cart_transaction_id', $cartTrans->id)
+                                ->where('court_id', $item['court_id'])
+                                ->where('start_time', $startDateTime)
+                                ->where('end_time', $endDateTime)
+                                ->first();
+                            if ($associatedBooking) {
+                                $pendingBookingId = $associatedBooking->id;
+                            }
+                        }
                         break;
                     }
                 }
 
                 // If the current user is a regular user and there's a booking pending approval
-                // Add them to waitlist instead of rejecting
+                // Add them to waitlist AND create cart items
                 // Admins can bypass waitlist and book directly
                 if ($request->user()->role === 'user' && $isPendingApprovalBooking) {
-                    // Instead of adding to cart, add to waitlist
-                    DB::rollBack();
-
-                    // Start new transaction for waitlist
-                    DB::beginTransaction();
-
                     // Get the next position in waitlist
                     $nextPosition = BookingWaitlist::where('court_id', $item['court_id'])
                         ->where('start_time', $startDateTime)
@@ -268,8 +273,10 @@ class CartController extends Controller
                         ->where('status', BookingWaitlist::STATUS_PENDING)
                         ->count() + 1;
 
+                    // Create waitlist entry FIRST so we have the ID
                     $waitlistEntry = BookingWaitlist::create([
                         'user_id' => $userId,
+                        'pending_booking_id' => $pendingBookingId,
                         'pending_cart_transaction_id' => $pendingCartTransactionId,
                         'court_id' => $item['court_id'],
                         'sport_id' => $item['sport_id'],
@@ -281,12 +288,37 @@ class CartController extends Controller
                         'status' => BookingWaitlist::STATUS_PENDING
                     ]);
 
+                    // Create cart item for the waitlisted slot with waitlist ID link
+                    $cartItem = CartItem::create([
+                        'user_id' => $userId,
+                        'cart_transaction_id' => $cartTransaction->id,
+                        'booking_waitlist_id' => $waitlistEntry->id, // Link to waitlist!
+                        'court_id' => $item['court_id'],
+                        'sport_id' => $item['sport_id'],
+                        'booking_date' => $item['booking_date'],
+                        'start_time' => $item['start_time'],
+                        'end_time' => $item['end_time'],
+                        'price' => $item['price'],
+                        'number_of_players' => $item['number_of_players'] ?? 1,
+                        'notes' => $item['notes'] ?? null,
+                        'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
+                        'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
+                        'admin_notes' => $item['admin_notes'] ?? null
+                    ]);
+
+                    // Update cart transaction total price
+                    $cartTransaction->update([
+                        'total_price' => $cartTransaction->total_price + floatval($item['price'])
+                    ]);
+
                     DB::commit();
 
                     return response()->json([
                         'message' => 'This time slot is currently pending approval for another user. You have been added to the waitlist.',
                         'waitlisted' => true,
                         'waitlist_entry' => $waitlistEntry->load(['court', 'sport']),
+                        'cart_item' => $cartItem->load(['court', 'sport', 'court.images']),
+                        'cart_transaction' => $cartTransaction->fresh()->load(['cartItems', 'user']),
                         'position' => $nextPosition
                     ], 200);
                 }

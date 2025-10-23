@@ -102,11 +102,14 @@
         <div class="alert-box">
             <p><strong>Your waitlisted booking has been cancelled.</strong></p>
             <p>The time slot you were waiting for has been approved for another user.</p>
+            <p style="margin-top: 10px;"><strong>Any booking you made for this slot will be automatically rejected.</strong></p>
         </div>
 
         <p>Dear {{ $user->name }},</p>
 
         <p>We regret to inform you that your waitlisted booking request has been cancelled because the time slot has been approved and confirmed for another user.</p>
+
+        <p><strong>Important:</strong> If you received a notification to upload payment for this time slot and created a booking, that booking will be automatically rejected. You do not need to upload any payment.</p>
 
         <div class="booking-details">
             <h2>📋 Cancelled Waitlist Details</h2>

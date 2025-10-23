@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Carbon\Carbon;
+use App\Helpers\BusinessHoursHelper;
 
 class BookingWaitlist extends Model
 {
@@ -93,15 +94,25 @@ class BookingWaitlist extends Model
 
     /**
      * Send notification email to user and start expiration timer
-     * Default expiration is 1 hour from notification
+     * Uses business hours logic to calculate expiration time:
+     * - During business hours (8am-5pm): expires 1 hour from now
+     * - After 5pm or before 8am: expires at 9am next working day
+     * - On weekends/holidays: expires at 9am next working day
+     *
+     * @param int $expirationHours Legacy parameter, ignored when using business hours
      */
     public function sendNotification(int $expirationHours = 1): void
     {
         $now = Carbon::now();
+
+        // Use BusinessHoursHelper to calculate expiration time
+        // This ensures waitlist users get proper deadline based on business hours
+        $expiresAt = BusinessHoursHelper::calculateExpirationTime($now);
+
         $this->update([
             'status' => self::STATUS_NOTIFIED,
             'notified_at' => $now,
-            'expires_at' => $now->addHours($expirationHours)
+            'expires_at' => $expiresAt
         ]);
     }
 
@@ -138,7 +149,8 @@ class BookingWaitlist extends Model
      */
     public function cancel(): void
     {
-        $this->update(['status' => self::STATUS_CANCELLED]);
+        $this->status = self::STATUS_CANCELLED;
+        $this->save();
     }
 
     /**
