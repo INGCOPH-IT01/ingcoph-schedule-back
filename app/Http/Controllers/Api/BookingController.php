@@ -1088,6 +1088,7 @@ class BookingController extends Controller
                 $newBooking = Booking::create([
                     'user_id' => $waitlistEntry->user_id,
                     'cart_transaction_id' => null, // Will be linked when they upload payment
+                    'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
                     'court_id' => $waitlistEntry->court_id,
                     'sport_id' => $waitlistEntry->sport_id,
                     'start_time' => $waitlistEntry->start_time,
@@ -1099,6 +1100,13 @@ class BookingController extends Controller
                     'payment_method' => 'pending',
                     'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
                 ]);
+
+                // Update cart_items and cart_transactions to set booking_waitlist_id to null
+                \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                    ->update(['booking_waitlist_id' => null]);
+
+                \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
+                    ->update(['booking_waitlist_id' => null]);
 
                 // Send notification email with business-hours-aware payment deadline
                 // If rejected after 5pm or before 8am: deadline is 9am next working day

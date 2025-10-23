@@ -27,7 +27,8 @@ class CartTransactionController extends Controller
         $transactions = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -40,7 +41,8 @@ class CartTransactionController extends Controller
                 $query->where('user_id', $userId)
                       ->orWhereHas('cartItems', function($q) use ($userId) {
                           $q->where('booking_for_user_id', $userId)
-                            ->where('status', '!=', 'cancelled');
+                            ->where('status', '!=', 'cancelled')
+                            ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                       });
             })
             ->whereIn('status', ['pending', 'completed'])
@@ -58,7 +60,8 @@ class CartTransactionController extends Controller
         $query = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -74,14 +77,16 @@ class CartTransactionController extends Controller
         if ($request->filled('date_from')) {
             $query->whereHas('cartItems', function($q) use ($request) {
                 $q->where('booking_date', '>=', $request->date_from)
-                  ->where('status', '!=', 'cancelled');
+                  ->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
             });
         }
 
         if ($request->filled('date_to')) {
             $query->whereHas('cartItems', function($q) use ($request) {
                 $q->where('booking_date', '<=', $request->date_to)
-                  ->where('status', '!=', 'cancelled');
+                  ->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
             });
         }
 
@@ -130,7 +135,8 @@ class CartTransactionController extends Controller
         $transaction = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -145,6 +151,7 @@ class CartTransactionController extends Controller
         $isOwner = $transaction->user_id === $request->user()->id;
         $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)
             ->where('status', '!=', 'cancelled')
+            ->whereNull('booking_waitlist_id') // Filter out waitlist bookings
             ->exists();
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
@@ -436,47 +443,55 @@ class CartTransactionController extends Controller
                 ->orderBy('created_at')
                 ->get();
 
-            // Process each waitlist user
-            foreach ($waitlistEntries as $waitlistEntry) {
-                try {
-                    DB::beginTransaction();
+                // Process each waitlist user
+                foreach ($waitlistEntries as $waitlistEntry) {
+                    try {
+                        DB::beginTransaction();
 
-                    // Load relationships
-                    $waitlistEntry->load(['user', 'court', 'sport']);
+                        // Load relationships
+                        $waitlistEntry->load(['user', 'court', 'sport']);
 
-                    // Create booking automatically for waitlisted user
-                    $newBooking = Booking::create([
-                        'user_id' => $waitlistEntry->user_id,
-                        'cart_transaction_id' => null, // Will be linked when they checkout
-                        'court_id' => $waitlistEntry->court_id,
-                        'sport_id' => $waitlistEntry->sport_id,
-                        'start_time' => $waitlistEntry->start_time,
-                        'end_time' => $waitlistEntry->end_time,
-                        'total_price' => $waitlistEntry->price,
-                        'number_of_players' => $waitlistEntry->number_of_players,
-                        'status' => 'pending',  // Pending until payment is uploaded
-                        'payment_status' => 'unpaid',
-                        'payment_method' => 'pending',
-                        'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
-                    ]);
+                        // Create booking automatically for waitlisted user
+                        $newBooking = Booking::create([
+                            'user_id' => $waitlistEntry->user_id,
+                            'cart_transaction_id' => null, // Will be linked when they checkout
+                            'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
+                            'court_id' => $waitlistEntry->court_id,
+                            'sport_id' => $waitlistEntry->sport_id,
+                            'start_time' => $waitlistEntry->start_time,
+                            'end_time' => $waitlistEntry->end_time,
+                            'total_price' => $waitlistEntry->price,
+                            'number_of_players' => $waitlistEntry->number_of_players,
+                            'status' => 'pending',  // Pending until payment is uploaded
+                            'payment_status' => 'unpaid',
+                            'payment_method' => 'pending',
+                            'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
+                        ]);
 
-                    // Send notification email with business-hours-aware payment deadline
-                    // If rejected after 5pm or before 8am: deadline is 9am next working day
-                    // If rejected during business hours: deadline is 1 hour from now
-                    $waitlistEntry->sendNotification();
+                        // Update cart_items and cart_transactions to set booking_waitlist_id to null
+                        \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                            ->update(['booking_waitlist_id' => null]);
 
-                    // Send email
-                    if ($waitlistEntry->user && $waitlistEntry->user->email) {
-                        Mail::to($waitlistEntry->user->email)
-                            ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
+                        \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
+                            ->update(['booking_waitlist_id' => null]);
+
+                        // Send notification email with business-hours-aware payment deadline
+                        // If rejected after 5pm or before 8am: deadline is 9am next working day
+                        // If rejected during business hours: deadline is 1 hour from now
+                        $waitlistEntry->sendNotification();
+
+                        // Send email
+                        if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                            Mail::to($waitlistEntry->user->email)
+                                ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
+                        }
+
+                        DB::commit();
+                    } catch (\Exception $e) {
+                        DB::rollBack();
+                        // Silently continue
                     }
-
-                    DB::commit();
-                } catch (\Exception $e) {
-                    DB::rollBack();
-                    // Silently continue
                 }
-            }
         }
     }
 

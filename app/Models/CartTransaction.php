@@ -12,6 +12,7 @@ class CartTransaction extends Model
         'user_id',
         'booking_for_user_id',
         'booking_for_user_name',
+        'booking_waitlist_id',
         'total_price',
         'status',
         'approval_status',
@@ -55,6 +56,14 @@ class CartTransaction extends Model
     public function bookingForUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'booking_for_user_id');
+    }
+
+    /**
+     * Get the waitlist entry that this transaction was created from
+     */
+    public function bookingWaitlist(): BelongsTo
+    {
+        return $this->belongsTo(BookingWaitlist::class, 'booking_waitlist_id');
     }
 
     /**

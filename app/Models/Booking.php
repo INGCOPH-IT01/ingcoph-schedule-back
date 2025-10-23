@@ -13,6 +13,7 @@ class Booking extends Model
         'booking_for_user_id',
         'booking_for_user_name',
         'cart_transaction_id',
+        'booking_waitlist_id',
         'court_id',
         'sport_id',
         'start_time',
@@ -104,6 +105,14 @@ class Booking extends Model
     public function cartTransaction(): BelongsTo
     {
         return $this->belongsTo(CartTransaction::class);
+    }
+
+    /**
+     * Get the waitlist entry that this booking was created from
+     */
+    public function bookingWaitlist(): BelongsTo
+    {
+        return $this->belongsTo(BookingWaitlist::class, 'booking_waitlist_id');
     }
 
     /**
