@@ -49,8 +49,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
 
-    // Sport management (admin only)
-    Route::middleware('admin')->group(function () {
+    // Sport management (admin and staff)
+    Route::middleware('admin.or.staff')->group(function () {
         Route::post('/sports', [SportController::class, 'store']);
         Route::put('/sports/{id}', [SportController::class, 'update']);
         Route::delete('/sports/{id}', [SportController::class, 'destroy']);
@@ -62,8 +62,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/sports/{sportId}/time-based-pricing/{pricingId}', [SportController::class, 'deleteTimeBasedPricing']);
     });
 
-    // Court management (admin only)
-    Route::middleware('admin')->group(function () {
+    // Court management (admin and staff)
+    Route::middleware('admin.or.staff')->group(function () {
         Route::post('/courts', [CourtController::class, 'store']);
         Route::put('/courts/{id}', [CourtController::class, 'update']);
         Route::delete('/courts/{id}', [CourtController::class, 'destroy']);
@@ -125,8 +125,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/recurring-schedules/{recurringSchedule}', [RecurringScheduleController::class, 'destroy']);
     Route::post('/recurring-schedules/{recurringSchedule}/generate-bookings', [RecurringScheduleController::class, 'generateBookings']);
 
-    // Admin booking routes (admin only)
-    Route::middleware('admin')->group(function () {
+    // Admin booking routes (admin and staff)
+    Route::middleware('admin.or.staff')->group(function () {
         Route::get('/admin/bookings/pending', [BookingController::class, 'pendingBookings']);
         Route::get('/admin/bookings/stats', [BookingController::class, 'getStats']);
         Route::post('/admin/bookings/{id}/approve', [BookingController::class, 'approveBooking']);
@@ -147,6 +147,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/admin/cart-items/{id}', [CartController::class, 'updateCartItem']);
         Route::delete('/admin/cart-items/{id}', [CartController::class, 'deleteCartItem']);
 
+        // Admin holiday management routes
+        Route::get('/admin/holidays', [HolidayController::class, 'index']);
+        Route::get('/admin/holidays/year/{year}', [HolidayController::class, 'getForYear']);
+        Route::post('/admin/holidays', [HolidayController::class, 'store']);
+        Route::put('/admin/holidays/{id}', [HolidayController::class, 'update']);
+        Route::delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
+        Route::post('/admin/holidays/check-date', [HolidayController::class, 'checkDate']);
+    });
+
+    // Admin-only routes (User Management and Company Settings)
+    Route::middleware('admin')->group(function () {
         // Admin user management routes
         Route::get('/admin/users', [UserController::class, 'index']);
         Route::get('/admin/users/stats', [UserController::class, 'stats']);
@@ -155,18 +166,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/admin/users/{id}', [UserController::class, 'update']);
         Route::delete('/admin/users/{id}', [UserController::class, 'destroy']);
 
-        // Admin company settings routes
+        // Admin company settings routes (includes payment settings)
         Route::put('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
         Route::delete('/admin/company-settings/payment-qr-code', [CompanySettingController::class, 'deletePaymentQrCode']);
-
-        // Admin holiday management routes
-        Route::get('/admin/holidays', [HolidayController::class, 'index']);
-        Route::get('/admin/holidays/year/{year}', [HolidayController::class, 'getForYear']);
-        Route::post('/admin/holidays', [HolidayController::class, 'store']);
-        Route::put('/admin/holidays/{id}', [HolidayController::class, 'update']);
-        Route::delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
-        Route::post('/admin/holidays/check-date', [HolidayController::class, 'checkDate']);
     });
 });

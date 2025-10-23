@@ -112,4 +112,12 @@ class User extends Authenticatable
     {
         return $this->role === 'staff' || $this->role === 'admin';
     }
+
+    /**
+     * Check if user is admin or staff
+     */
+    public function isAdminOrStaff(): bool
+    {
+        return $this->role === 'admin' || $this->role === 'staff';
+    }
 }
