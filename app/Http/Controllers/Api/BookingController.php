@@ -1084,10 +1084,13 @@ class BookingController extends Controller
                 // Load relationships
                 $waitlistEntry->load(['user', 'court', 'sport']);
 
+                // Find the cart transaction linked to this waitlist entry
+                $cartTransaction = \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)->first();
+
                 // Create booking automatically for waitlisted user
                 $newBooking = Booking::create([
                     'user_id' => $waitlistEntry->user_id,
-                    'cart_transaction_id' => null, // Will be linked when they upload payment
+                    'cart_transaction_id' => $cartTransaction ? $cartTransaction->id : null,
                     'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
                     'court_id' => $waitlistEntry->court_id,
                     'sport_id' => $waitlistEntry->sport_id,
@@ -1105,8 +1108,9 @@ class BookingController extends Controller
                 \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
                     ->update(['booking_waitlist_id' => null]);
 
-                \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
-                    ->update(['booking_waitlist_id' => null]);
+                if ($cartTransaction) {
+                    $cartTransaction->update(['booking_waitlist_id' => null]);
+                }
 
                 // Send notification email with business-hours-aware payment deadline
                 // If rejected after 5pm or before 8am: deadline is 9am next working day
