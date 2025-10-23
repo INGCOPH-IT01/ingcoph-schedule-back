@@ -107,6 +107,14 @@ class Booking extends Model
     }
 
     /**
+     * Get waitlist entries for this booking
+     */
+    public function waitlistEntries(): HasMany
+    {
+        return $this->hasMany(BookingWaitlist::class, 'pending_booking_id');
+    }
+
+    /**
      * Generate a unique QR code for this booking
      */
     public function generateQrCode(): string

@@ -58,6 +58,14 @@ class CartTransaction extends Model
     }
 
     /**
+     * Get waitlist entries for this transaction
+     */
+    public function waitlistEntries(): HasMany
+    {
+        return $this->hasMany(BookingWaitlist::class, 'pending_cart_transaction_id');
+    }
+
+    /**
      * Sync bookings status with cart transaction approval status
      * This ensures that when a cart transaction is approved/rejected,
      * all associated bookings reflect the same status

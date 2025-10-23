@@ -265,7 +265,16 @@ class CartTransactionController extends Controller
         }
 
         // Notify waitlist users - transaction approved, slots are confirmed
-        // No action needed for waitlist as the slot is now taken
+        // Cancel all waitlisted bookings for the same time slots
+        try {
+            $this->cancelWaitlistUsers($transaction);
+        } catch (\Exception $e) {
+            // Continue silently - approval should not fail due to waitlist notification issues
+            Log::error('waitlist_cancellation_error', [
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         return response()->json([
             'message' => 'Transaction approved successfully and notification email sent',
@@ -318,6 +327,54 @@ class CartTransactionController extends Controller
             'message' => 'Transaction rejected',
             'transaction' => $transaction->load(['approver', 'bookings'])
         ]);
+    }
+
+    /**
+     * Cancel waitlist entries when a transaction is approved
+     * This notifies waitlisted users that the slot is no longer available
+     */
+    private function cancelWaitlistUsers(CartTransaction $transaction)
+    {
+        // Get all cart items from this transaction
+        $cartItems = $transaction->cartItems()->where('status', '!=', 'cancelled')->get();
+
+        foreach ($cartItems as $cartItem) {
+            // Create datetime strings for the cart item
+            $startDateTime = $cartItem->booking_date . ' ' . $cartItem->start_time;
+            $endDateTime = $cartItem->booking_date . ' ' . $cartItem->end_time;
+
+            // Find pending waitlist entries for this time slot
+            $waitlistEntries = BookingWaitlist::where('court_id', $cartItem->court_id)
+                ->where('start_time', $startDateTime)
+                ->where('end_time', $endDateTime)
+                ->where('status', BookingWaitlist::STATUS_PENDING)
+                ->orderBy('position')
+                ->orderBy('created_at')
+                ->get();
+
+            // Cancel each waitlist entry
+            foreach ($waitlistEntries as $waitlistEntry) {
+                try {
+                    // Load relationships for email
+                    $waitlistEntry->load(['user', 'court', 'sport']);
+
+                    // Mark waitlist as cancelled
+                    $waitlistEntry->cancel();
+
+                    // Send cancellation email
+                    if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                        Mail::to($waitlistEntry->user->email)
+                            ->send(new \App\Mail\WaitlistCancelledMail($waitlistEntry));
+                    }
+                } catch (\Exception $e) {
+                    // Log error but continue processing other entries
+                    Log::error('waitlist_cancellation_individual_error', [
+                        'waitlist_id' => $waitlistEntry->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
     }
 
     /**
@@ -735,6 +792,34 @@ class CartTransactionController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get waitlist entries for a cart transaction
+     */
+    public function getWaitlistEntries($id)
+    {
+        try {
+            $transaction = CartTransaction::findOrFail($id);
+
+            // Load waitlist entries with user, court, and sport relationships
+            $waitlistEntries = $transaction->waitlistEntries()
+                ->with(['user', 'court', 'sport'])
+                ->orderBy('position', 'asc')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $waitlistEntries
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load waitlist entries: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -757,7 +757,7 @@ class BookingController extends Controller
                     // Get customer information from cart transaction
                     $transaction = $conflictingCartItem->cartTransaction;
                     $effectiveUser = $transaction->bookingForUser ?? $transaction->user;
-                    $displayName = $transaction->booking_for_user_name ?? $effectiveUser->name ?? 'Unknown';
+                    $displayName = $transaction->booking_for_user_name ?? $conflictingCartItem->admin_notes ?? null;
                     $createdByUser = $transaction->user;
                     $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
 
@@ -783,6 +783,7 @@ class BookingController extends Controller
                         // Customer information
                         'display_name' => $displayName,
                         'booking_for_user_name' => $transaction->booking_for_user_name,
+                        'admin_notes' => $conflictingCartItem->admin_notes,
                         'user_name' => $transaction->user->name ?? null,
                         'user_email' => $effectiveUser->email ?? null,
                         'user_phone' => $effectiveUser->phone ?? null,
@@ -828,7 +829,7 @@ class BookingController extends Controller
 
                     // Get customer information from booking
                     $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
-                    $bookingDisplayName = $conflictingBooking->booking_for_user_name ?? $bookingEffectiveUser->name ?? 'Unknown';
+                    $bookingDisplayName = $conflictingBooking->booking_for_user_name ?? $conflictingBooking->admin_notes ?? null;
                     $bookingCreatedByUser = $conflictingBooking->user;
                     $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
 
@@ -853,6 +854,7 @@ class BookingController extends Controller
                         // Customer information
                         'display_name' => $bookingDisplayName,
                         'booking_for_user_name' => $conflictingBooking->booking_for_user_name,
+                        'admin_notes' => $conflictingBooking->admin_notes,
                         'user_name' => $conflictingBooking->user->name ?? null,
                         'user_email' => $bookingEffectiveUser->email ?? null,
                         'user_phone' => $bookingEffectiveUser->phone ?? null,
@@ -1375,6 +1377,34 @@ class BookingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get waitlist entries for a booking
+     */
+    public function getWaitlistEntries($id)
+    {
+        try {
+            $booking = Booking::findOrFail($id);
+
+            // Load waitlist entries with user, court, and sport relationships
+            $waitlistEntries = $booking->waitlistEntries()
+                ->with(['user', 'court', 'sport'])
+                ->orderBy('position', 'asc')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $waitlistEntries
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load waitlist entries: ' . $e->getMessage()
             ], 500);
         }
     }
