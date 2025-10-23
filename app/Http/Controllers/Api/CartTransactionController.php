@@ -71,7 +71,8 @@ class CartTransactionController extends Controller
                 'bookings',
                 'approver'
             ])
-            ->whereIn('status', ['pending', 'completed']);
+            ->whereIn('status', ['pending', 'completed'])
+            ->whereHas('bookings'); // Only load transactions that have associated bookings
 
         // Filter by booking date range if provided
         if ($request->filled('date_from')) {
