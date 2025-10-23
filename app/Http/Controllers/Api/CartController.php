@@ -936,17 +936,6 @@ class CartController extends Controller
 
             DB::commit();
 
-            // Log successful waitlist conversion if applicable
-            if ($hasWaitlistEntry) {
-                Log::info('Waitlist entry converted to booking', [
-                    'user_id' => $userId,
-                    'transaction_id' => $cartTransaction->id,
-                    'waitlist_count' => count($matchedWaitlistEntries),
-                    'approval_status' => 'pending_waitlist',
-                    'requires_admin_approval' => true
-                ]);
-            }
-
             return response()->json([
                 'message' => 'Checkout successful',
                 'transaction' => $cartTransaction->load(['cartItems.court', 'bookings']),

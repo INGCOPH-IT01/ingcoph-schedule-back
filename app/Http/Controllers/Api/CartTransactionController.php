@@ -271,10 +271,6 @@ class CartTransactionController extends Controller
             $this->cancelWaitlistUsers($transaction);
         } catch (\Exception $e) {
             // Continue silently - approval should not fail due to waitlist notification issues
-            Log::error('waitlist_cancellation_error', [
-                'transaction_id' => $transaction->id,
-                'error' => $e->getMessage(),
-            ]);
         }
 
         return response()->json([
@@ -340,11 +336,6 @@ class CartTransactionController extends Controller
         // Get all bookings from this transaction
         $approvedBookings = $transaction->bookings;
 
-        Log::info('Processing waitlist cancellation for approved transaction', [
-            'transaction_id' => $transaction->id,
-            'bookings_count' => $approvedBookings->count()
-        ]);
-
         foreach ($approvedBookings as $approvedBooking) {
             // Find ALL waitlist entries (pending and notified) linked to this booking
             $waitlistEntries = BookingWaitlist::where('pending_booking_id', $approvedBooking->id)
@@ -352,12 +343,6 @@ class CartTransactionController extends Controller
                 ->orderBy('position')
                 ->orderBy('created_at')
                 ->get();
-
-            Log::info('Processing waitlist for specific booking in transaction', [
-                'transaction_id' => $transaction->id,
-                'booking_id' => $approvedBooking->id,
-                'waitlist_entries_found' => $waitlistEntries->count()
-            ]);
 
             // Cancel each waitlist entry and reject associated bookings
             foreach ($waitlistEntries as $waitlistEntry) {
@@ -373,15 +358,6 @@ class CartTransactionController extends Controller
                     $waitlistCartItems = \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
                         ->whereNotIn('status', ['cancelled', 'rejected'])
                         ->get();
-
-                    Log::info('Found cart items to cancel for waitlist', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'waitlist_user_id' => $waitlistEntry->user_id,
-                        'parent_booking_id' => $approvedBooking->id,
-                        'cart_items_found' => $waitlistCartItems->count(),
-                        'cart_item_ids' => $waitlistCartItems->pluck('id')->toArray(),
-                        'cart_transaction_ids' => $waitlistCartItems->pluck('cart_transaction_id')->unique()->toArray()
-                    ]);
 
                     // Reject each cart item and its transaction
                     foreach ($waitlistCartItems as $cartItem) {
@@ -427,24 +403,8 @@ class CartTransactionController extends Controller
                         }
                     }
 
-                    Log::info('Rejected waitlist cart items and related records', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'rejected_cart_items' => $cancelledCartItemIds,
-                        'rejected_transactions' => $rejectedTransactionIds,
-                        'rejected_bookings' => $rejectedBookingIds
-                    ]);
-
                     // Mark waitlist as cancelled
-                    $oldStatus = $waitlistEntry->status;
                     $waitlistEntry->cancel();
-                    $waitlistEntry->refresh(); // Reload from database to verify
-
-                    Log::info('Waitlist status update', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'old_status' => $oldStatus,
-                        'new_status' => $waitlistEntry->status,
-                        'status_updated' => $waitlistEntry->status === BookingWaitlist::STATUS_CANCELLED
-                    ]);
 
                     // Send cancellation email
                     if ($waitlistEntry->user && $waitlistEntry->user->email) {
@@ -452,24 +412,8 @@ class CartTransactionController extends Controller
                             ->send(new \App\Mail\WaitlistCancelledMail($waitlistEntry));
                     }
 
-                    // Log the cancellation
-                    Log::info('Waitlist cancelled due to parent booking approval', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'user_id' => $waitlistEntry->user_id,
-                        'court_id' => $waitlistEntry->court_id,
-                        'approved_booking_id' => $approvedBooking->id,
-                        'transaction_id' => $transaction->id,
-                        'rejected_bookings' => $rejectedBookingIds,
-                        'rejected_transactions' => $rejectedTransactionIds,
-                        'final_status' => $waitlistEntry->status
-                    ]);
-
                 } catch (\Exception $e) {
-                    // Log error but continue processing other entries
-                    Log::error('waitlist_cancellation_individual_error', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'error' => $e->getMessage(),
-                    ]);
+                    // Silently continue processing other entries
                 }
             }
         }
@@ -527,21 +471,10 @@ class CartTransactionController extends Controller
                             ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
                     }
 
-                    // Log the conversion
-                    Log::info('Waitlist auto-converted to booking', [
-                        'waitlist_id' => $waitlistEntry->id,
-                        'new_booking_id' => $newBooking->id,
-                        'user_id' => $waitlistEntry->user_id,
-                        'court_id' => $waitlistEntry->court_id
-                    ]);
-
                     DB::commit();
                 } catch (\Exception $e) {
                     DB::rollBack();
-                    Log::error('Waitlist conversion failed', [
-                        'waitlist_id' => $waitlistEntry->id ?? null,
-                        'error' => $e->getMessage()
-                    ]);
+                    // Silently continue
                 }
             }
         }
