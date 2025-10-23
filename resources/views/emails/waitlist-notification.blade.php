@@ -141,9 +141,26 @@
         </div>
 
         <div class="timer-box">
-            <h3>⏱️ Time Remaining to Book</h3>
-            <div class="time">{{ \Carbon\Carbon::parse($expiresAt)->diffInMinutes(now()) }} minutes</div>
-            <p style="margin: 5px 0 0 0; font-size: 14px;">Expires at: {{ \Carbon\Carbon::parse($expiresAt)->format('g:i A') }}</p>
+            <h3>⏱️ Payment Upload Deadline</h3>
+            @php
+                $expirationTime = \Carbon\Carbon::parse($expiresAt);
+                $now = \Carbon\Carbon::now();
+                $minutesRemaining = $now->diffInMinutes($expirationTime, false);
+                $isFutureDay = $expirationTime->isAfter($now->copy()->endOfDay());
+            @endphp
+
+            @if($minutesRemaining > 120 || $isFutureDay)
+                <!-- If more than 2 hours or next day, show date and time -->
+                <div class="time" style="font-size: 24px;">{{ $expirationTime->format('M j, Y') }}</div>
+                <div class="time">{{ $expirationTime->format('g:i A') }}</div>
+                @if($expirationTime->isAfter($now->copy()->endOfDay()))
+                    <p style="margin: 10px 0 0 0; font-size: 14px;">Payment window opens at 8:00 AM on {{ $expirationTime->format('M j') }}</p>
+                @endif
+            @else
+                <!-- Active countdown for same-day deadlines -->
+                <div class="time">{{ $minutesRemaining }} minutes</div>
+                <p style="margin: 5px 0 0 0; font-size: 14px;">Expires at: {{ $expirationTime->format('g:i A') }}</p>
+            @endif
         </div>
 
         <div class="booking-details">
@@ -180,15 +197,25 @@
             <ol style="margin: 10px 0; padding-left: 20px; color: #856404;">
                 <li><strong>Click the button below</strong> to go to the booking page</li>
                 <li><strong>Complete your booking</strong> by uploading proof of payment</li>
-                <li><strong>Act fast!</strong> This slot will be released to other users if you don't book within {{ \Carbon\Carbon::parse($expiresAt)->diffInMinutes(now()) }} minutes</li>
+                @php
+                    $expirationTime = \Carbon\Carbon::parse($expiresAt);
+                    $isNextDay = $expirationTime->isAfter(now()->copy()->endOfDay());
+                @endphp
+                @if($isNextDay)
+                <li><strong>Act fast!</strong> Upload your payment proof by <strong>{{ $expirationTime->format('g:i A') }} on {{ $expirationTime->format('M j, Y') }}</strong> (office hours: 8:00 AM - 5:00 PM)</li>
+                @else
+                <li><strong>Act fast!</strong> Upload your payment proof by <strong>{{ $expirationTime->format('g:i A') }}</strong></li>
+                @endif
             </ol>
         </div>
 
-        <div style="text-align: center;">
-            <a href="{{ env('APP_URL') }}/courts" class="cta-button">🎯 Book Now!</a>
-        </div>
-
-        <p style="color: #d32f2f; font-weight: bold; text-align: center;">⚠️ This opportunity expires at {{ \Carbon\Carbon::parse($expiresAt)->format('g:i A') }}. Don't miss out!</p>
+        @php
+            $expirationTime = \Carbon\Carbon::parse($expiresAt);
+            $displayDate = $expirationTime->isToday() ? 'Today' : $expirationTime->format('M j, Y');
+        @endphp
+        <p style="color: #d32f2f; font-weight: bold; text-align: center;">
+            ⚠️ Payment deadline: {{ $displayDate }} at {{ $expirationTime->format('g:i A') }}. Don't miss out!
+        </p>
 
         @if($contactEmail || $contactMobile || $contactViber)
         <!-- Contact Information -->

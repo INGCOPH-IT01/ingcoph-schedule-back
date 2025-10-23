@@ -13,6 +13,7 @@ class CartItem extends Model
         'booking_for_user_id',
         'booking_for_user_name',
         'cart_transaction_id',
+        'booking_waitlist_id',
         'court_id',
         'sport_id',
         'booking_date',

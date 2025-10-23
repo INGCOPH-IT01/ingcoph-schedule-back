@@ -84,6 +84,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/cart-transactions', [CartTransactionController::class, 'index']);
     Route::get('/cart-transactions/{id}', [CartTransactionController::class, 'show']);
     Route::get('/cart-transactions/{id}/proof-of-payment', [CartTransactionController::class, 'getProofOfPayment']);
+    Route::get('/cart-transactions/{id}/waitlist', [CartTransactionController::class, 'getWaitlistEntries']);
     Route::post('/cart-transactions/{id}/upload-proof', [CartTransactionController::class, 'uploadProofOfPayment']);
     Route::post('/cart-transactions/{id}/resend-confirmation', [CartTransactionController::class, 'resendConfirmationEmail']);
     Route::delete('/cart-transactions/{id}', [CartTransactionController::class, 'destroy']);
@@ -101,6 +102,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Proof of payment routes
     Route::get('/bookings/{id}/proof-of-payment', [BookingController::class, 'getProofOfPayment']);
+
+    // Waitlist routes
+    Route::get('/bookings/{id}/waitlist', [BookingController::class, 'getWaitlistEntries']);
 
     // Resend confirmation email route
     Route::post('/bookings/{id}/resend-confirmation', [BookingController::class, 'resendConfirmationEmail']);

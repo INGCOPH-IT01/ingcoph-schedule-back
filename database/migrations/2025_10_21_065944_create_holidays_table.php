@@ -11,16 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('holidays', function (Blueprint $table) {
-            $table->id();
-            $table->date('date')->unique();
-            $table->string('name');
-            $table->string('description')->nullable();
-            $table->boolean('is_recurring')->default(false); // e.g., for holidays that repeat yearly
-            $table->timestamps();
+        if (!Schema::hasTable('holidays')) {
+            Schema::create('holidays', function (Blueprint $table) {
+                $table->id();
+                $table->date('date')->unique();
+                $table->string('name');
+                $table->string('description')->nullable();
+                $table->boolean('is_recurring')->default(false); // e.g., for holidays that repeat yearly
+                $table->timestamps();
 
-            $table->index('date');
-        });
+                $table->index('date');
+            });
+        }
     }
 
     /**

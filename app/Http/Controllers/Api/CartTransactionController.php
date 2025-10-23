@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CartTransaction;
+use App\Models\Booking;
 use App\Models\BookingWaitlist;
 use App\Mail\BookingApproved;
 use App\Mail\WaitlistNotificationMail;
@@ -26,7 +27,8 @@ class CartTransactionController extends Controller
         $transactions = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -39,7 +41,8 @@ class CartTransactionController extends Controller
                 $query->where('user_id', $userId)
                       ->orWhereHas('cartItems', function($q) use ($userId) {
                           $q->where('booking_for_user_id', $userId)
-                            ->where('status', '!=', 'cancelled');
+                            ->where('status', '!=', 'cancelled')
+                            ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                       });
             })
             ->whereIn('status', ['pending', 'completed'])
@@ -57,7 +60,8 @@ class CartTransactionController extends Controller
         $query = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -67,20 +71,23 @@ class CartTransactionController extends Controller
                 'bookings',
                 'approver'
             ])
-            ->whereIn('status', ['pending', 'completed']);
+            ->whereIn('status', ['pending', 'completed'])
+            ->whereHas('bookings'); // Only load transactions that have associated bookings
 
         // Filter by booking date range if provided
         if ($request->filled('date_from')) {
             $query->whereHas('cartItems', function($q) use ($request) {
                 $q->where('booking_date', '>=', $request->date_from)
-                  ->where('status', '!=', 'cancelled');
+                  ->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
             });
         }
 
         if ($request->filled('date_to')) {
             $query->whereHas('cartItems', function($q) use ($request) {
                 $q->where('booking_date', '<=', $request->date_to)
-                  ->where('status', '!=', 'cancelled');
+                  ->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
             });
         }
 
@@ -129,7 +136,8 @@ class CartTransactionController extends Controller
         $transaction = CartTransaction::with([
                 'user',
                 'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled');
+                    $query->where('status', '!=', 'cancelled')
+                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
                 },
                 'cartItems.court.sport',
                 'cartItems.sport',
@@ -144,6 +152,7 @@ class CartTransactionController extends Controller
         $isOwner = $transaction->user_id === $request->user()->id;
         $isBookingForUser = $transaction->cartItems()->where('booking_for_user_id', $request->user()->id)
             ->where('status', '!=', 'cancelled')
+            ->whereNull('booking_waitlist_id') // Filter out waitlist bookings
             ->exists();
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
@@ -265,7 +274,12 @@ class CartTransactionController extends Controller
         }
 
         // Notify waitlist users - transaction approved, slots are confirmed
-        // No action needed for waitlist as the slot is now taken
+        // Cancel all waitlisted bookings for the same time slots
+        try {
+            $this->cancelWaitlistUsers($transaction);
+        } catch (\Exception $e) {
+            // Continue silently - approval should not fail due to waitlist notification issues
+        }
 
         return response()->json([
             'message' => 'Transaction approved successfully and notification email sent',
@@ -321,46 +335,164 @@ class CartTransactionController extends Controller
     }
 
     /**
-     * Notify waitlist users when a transaction is rejected
-     * This makes the time slots available to waitlisted users
+     * Cancel waitlist entries when a transaction is approved
+     * This notifies waitlisted users that the slot is no longer available
+     * Also rejects any auto-created bookings for waitlisted users
      */
-    private function notifyWaitlistUsers(CartTransaction $transaction, string $notificationType = 'rejected')
+    private function cancelWaitlistUsers(CartTransaction $transaction)
     {
-        // Get all cart items from this transaction
-        $cartItems = $transaction->cartItems()->where('status', '!=', 'cancelled')->get();
+        // Get all bookings from this transaction
+        $approvedBookings = $transaction->bookings;
 
-        foreach ($cartItems as $cartItem) {
-            // Create datetime strings for the cart item
-            $startDateTime = $cartItem->booking_date . ' ' . $cartItem->start_time;
-            $endDateTime = $cartItem->booking_date . ' ' . $cartItem->end_time;
-
-            // Find pending waitlist entries for this time slot
-            $waitlistEntries = BookingWaitlist::where('court_id', $cartItem->court_id)
-                ->where('start_time', $startDateTime)
-                ->where('end_time', $endDateTime)
-                ->where('status', BookingWaitlist::STATUS_PENDING)
+        foreach ($approvedBookings as $approvedBooking) {
+            // Find ALL waitlist entries (pending and notified) linked to this booking
+            $waitlistEntries = BookingWaitlist::where('pending_booking_id', $approvedBooking->id)
+                ->whereIn('status', [BookingWaitlist::STATUS_PENDING, BookingWaitlist::STATUS_NOTIFIED])
                 ->orderBy('position')
                 ->orderBy('created_at')
                 ->get();
 
-            // Notify each waitlist user
+            // Cancel each waitlist entry and reject associated bookings
             foreach ($waitlistEntries as $waitlistEntry) {
                 try {
                     // Load relationships for email
                     $waitlistEntry->load(['user', 'court', 'sport']);
 
-                    // Send notification email and start expiration timer (1 hour by default)
-                    $waitlistEntry->sendNotification(1);
+                    $rejectedBookingIds = [];
+                    $rejectedTransactionIds = [];
+                    $cancelledCartItemIds = [];
 
-                    // Send email
+                    // Find cart items directly linked to this waitlist entry via foreign key
+                    $waitlistCartItems = \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                        ->whereNotIn('status', ['cancelled', 'rejected'])
+                        ->get();
+
+                    // Reject each cart item and its transaction
+                    foreach ($waitlistCartItems as $cartItem) {
+                        // Reject the cart item
+                        $cartItem->update([
+                            'status' => 'rejected',
+                            'notes' => 'Rejected: Parent booking was approved, waitlist cancelled'
+                        ]);
+                        $cancelledCartItemIds[] = $cartItem->id;
+
+                        // Reject the cart transaction if not already rejected
+                        if ($cartItem->cart_transaction_id) {
+                            $cartTransaction = CartTransaction::find($cartItem->cart_transaction_id);
+                            if ($cartTransaction && $cartTransaction->approval_status !== 'rejected') {
+                                $cartTransaction->update([
+                                    'approval_status' => 'rejected',
+                                    'rejection_reason' => 'Parent booking was approved - waitlist cancelled'
+                                ]);
+
+                                if (!in_array($cartTransaction->id, $rejectedTransactionIds)) {
+                                    $rejectedTransactionIds[] = $cartTransaction->id;
+                                }
+
+                                // Find and reject bookings linked to this transaction
+                                $transactionBookings = \App\Models\Booking::where('cart_transaction_id', $cartTransaction->id)
+                                    ->where('id', '!=', $approvedBooking->id) // Don't touch parent!
+                                    ->where('user_id', $waitlistEntry->user_id)
+                                    ->whereIn('status', ['pending', 'approved'])
+                                    ->get();
+
+                                foreach ($transactionBookings as $booking) {
+                                    $oldBookingStatus = $booking->status;
+                                    $booking->update([
+                                        'status' => 'rejected',
+                                        'notes' => ($booking->notes ?? '') . "\n\nAuto-rejected: Parent booking was approved."
+                                    ]);
+                                    $rejectedBookingIds[] = $booking->id;
+
+                                    // Broadcast status change
+                                    broadcast(new \App\Events\BookingStatusChanged($booking, $oldBookingStatus, 'rejected'))->toOthers();
+                                }
+                            }
+                        }
+                    }
+
+                    // Mark waitlist as cancelled
+                    $waitlistEntry->cancel();
+
+                    // Send cancellation email
                     if ($waitlistEntry->user && $waitlistEntry->user->email) {
                         Mail::to($waitlistEntry->user->email)
-                            ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
+                            ->send(new \App\Mail\WaitlistCancelledMail($waitlistEntry));
                     }
+
                 } catch (\Exception $e) {
-                    // Continue processing other entries
+                    // Silently continue processing other entries
                 }
             }
+        }
+    }
+
+    /**
+     * Notify waitlist users when a transaction is rejected
+     * This makes the time slots available to waitlisted users and auto-creates bookings
+     */
+    private function notifyWaitlistUsers(CartTransaction $transaction, string $notificationType = 'rejected')
+    {
+        // Get all bookings from this transaction
+        $rejectedBookings = $transaction->bookings;
+
+        foreach ($rejectedBookings as $rejectedBooking) {
+            // Find waitlist entries linked to this specific booking
+            $waitlistEntries = BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
+                ->where('status', BookingWaitlist::STATUS_PENDING)
+                ->orderBy('position')
+                ->orderBy('created_at')
+                ->get();
+
+                // Process each waitlist user
+                foreach ($waitlistEntries as $waitlistEntry) {
+                    try {
+                        DB::beginTransaction();
+
+                        // Load relationships
+                        $waitlistEntry->load(['user', 'court', 'sport']);
+
+                        // Create booking automatically for waitlisted user
+                        $newBooking = Booking::create([
+                            'user_id' => $waitlistEntry->user_id,
+                            'cart_transaction_id' => null, // Will be linked when they checkout
+                            'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
+                            'court_id' => $waitlistEntry->court_id,
+                            'sport_id' => $waitlistEntry->sport_id,
+                            'start_time' => $waitlistEntry->start_time,
+                            'end_time' => $waitlistEntry->end_time,
+                            'total_price' => $waitlistEntry->price,
+                            'number_of_players' => $waitlistEntry->number_of_players,
+                            'status' => 'pending',  // Pending until payment is uploaded
+                            'payment_status' => 'unpaid',
+                            'payment_method' => 'pending',
+                            'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
+                        ]);
+
+                        // Update cart_items and cart_transactions to set booking_waitlist_id to null
+                        \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                            ->update(['booking_waitlist_id' => null]);
+
+                        \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
+                            ->update(['booking_waitlist_id' => null]);
+
+                        // Send notification email with business-hours-aware payment deadline
+                        // If rejected after 5pm or before 8am: deadline is 9am next working day
+                        // If rejected during business hours: deadline is 1 hour from now
+                        $waitlistEntry->sendNotification();
+
+                        // Send email
+                        if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                            Mail::to($waitlistEntry->user->email)
+                                ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
+                        }
+
+                        DB::commit();
+                    } catch (\Exception $e) {
+                        DB::rollBack();
+                        // Silently continue
+                    }
+                }
         }
     }
 
@@ -735,6 +867,34 @@ class CartTransactionController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send confirmation email: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get waitlist entries for a cart transaction
+     */
+    public function getWaitlistEntries($id)
+    {
+        try {
+            $transaction = CartTransaction::findOrFail($id);
+
+            // Load waitlist entries with user, court, and sport relationships
+            $waitlistEntries = $transaction->waitlistEntries()
+                ->with(['user', 'court', 'sport'])
+                ->orderBy('position', 'asc')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $waitlistEntries
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load waitlist entries: ' . $e->getMessage()
             ], 500);
         }
     }
