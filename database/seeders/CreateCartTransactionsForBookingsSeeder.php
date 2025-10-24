@@ -154,7 +154,7 @@ class CreateCartTransactionsForBookingsSeeder extends Seeder
                             'booking_id' => $booking->id,
                             'transaction_id' => $cartTransaction->id,
                             'cart_item_id' => $cartItem->id,
-                            'court' => $booking->court->name ?? "Court {$booking->court_id,
+                            'court' => $booking->court_id,
                             'start_time' => $booking->start_time,
                             'end_time' => $booking->end_time,
                             'price' => $booking->total_price,
