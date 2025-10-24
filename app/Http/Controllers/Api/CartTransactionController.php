@@ -881,7 +881,7 @@ class CartTransactionController extends Controller
 
             // Load waitlist entries with user, court, and sport relationships
             $waitlistEntries = $transaction->waitlistEntries()
-                ->with(['user', 'court', 'sport'])
+                ->with(['user', 'bookingForUser', 'court', 'sport'])
                 ->orderBy('position', 'asc')
                 ->orderBy('created_at', 'asc')
                 ->get();

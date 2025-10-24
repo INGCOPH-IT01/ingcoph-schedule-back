@@ -153,30 +153,38 @@ class BookingController extends Controller
             try {
                 DB::beginTransaction();
 
+                // Use the conflicting booking's times for the waitlist entry
+                // This ensures the waitlist shows the correct parent booking's time slot
+                $waitlistStartTime = $conflictingBooking->start_time;
+                $waitlistEndTime = $conflictingBooking->end_time;
+
                 // Get the next position in waitlist
                 $nextPosition = BookingWaitlist::where('court_id', $court->id)
-                    ->where('start_time', $startTime)
-                    ->where('end_time', $endTime)
+                    ->where('start_time', $waitlistStartTime)
+                    ->where('end_time', $waitlistEndTime)
                     ->where('status', BookingWaitlist::STATUS_PENDING)
                     ->count() + 1;
 
-                // Use time-based pricing calculation
-                $totalPrice = $court->sport->calculatePriceForRange($startTime, $endTime);
+                // Use time-based pricing calculation based on parent booking's times
+                $totalPrice = $court->sport->calculatePriceForRange($waitlistStartTime, $waitlistEndTime);
 
                 // Create waitlist entry for ANY user (regular, staff, or admin)
                 $waitlistEntry = BookingWaitlist::create([
                     'user_id' => $request->user()->id,
+                    'booking_for_user_id' => $request->booking_for_user_id ?? null,
+                    'booking_for_user_name' => $request->booking_for_user_name ?? null,
                     'pending_booking_id' => $conflictingBooking->id,
                     'pending_cart_transaction_id' => $conflictingBooking->cart_transaction_id,
                     'court_id' => $court->id,
                     'sport_id' => $request->sport_id ?? $court->sport_id,
-                    'start_time' => $startTime,
-                    'end_time' => $endTime,
+                    'start_time' => $waitlistStartTime,
+                    'end_time' => $waitlistEndTime,
                     'price' => $totalPrice,
                     'number_of_players' => $request->number_of_players ?? 1,
                     'position' => $nextPosition,
                     'status' => BookingWaitlist::STATUS_PENDING,
-                    'notes' => $request->notes
+                    'notes' => $request->notes,
+                    'admin_notes' => $request->admin_notes ?? null
                 ]);
 
                 DB::commit();
@@ -1612,7 +1620,7 @@ class BookingController extends Controller
 
             // Load waitlist entries with user, court, and sport relationships
             $waitlistEntries = $booking->waitlistEntries()
-                ->with(['user', 'court', 'sport'])
+                ->with(['user', 'bookingForUser', 'court', 'sport'])
                 ->orderBy('position', 'asc')
                 ->orderBy('created_at', 'asc')
                 ->get();

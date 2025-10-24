@@ -11,6 +11,8 @@ class BookingWaitlist extends Model
 {
     protected $fillable = [
         'user_id',
+        'booking_for_user_id',
+        'booking_for_user_name',
         'pending_booking_id',
         'pending_cart_transaction_id',
         'court_id',
@@ -24,7 +26,8 @@ class BookingWaitlist extends Model
         'notified_at',
         'expires_at',
         'converted_cart_transaction_id',
-        'notes'
+        'notes',
+        'admin_notes'
     ];
 
     protected $casts = [
@@ -50,6 +53,14 @@ class BookingWaitlist extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the user this waitlist entry is booked for (if booked by admin/staff)
+     */
+    public function bookingForUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'booking_for_user_id');
     }
 
     /**
