@@ -262,10 +262,9 @@ class CartController extends Controller
                     }
                 }
 
-                // If the current user is a regular user and there's a booking pending approval
-                // Add them to waitlist AND create cart items
-                // Admins can bypass waitlist and book directly
-                if ($request->user()->role === 'user' && $isPendingApprovalBooking) {
+                // If there's a booking pending approval, add ALL users to waitlist
+                // This includes admins and staff - ensures fairness, no one can skip the line
+                if ($isPendingApprovalBooking) {
                     // Get the next position in waitlist
                     $nextPosition = BookingWaitlist::where('court_id', $item['court_id'])
                         ->where('start_time', $startDateTime)
