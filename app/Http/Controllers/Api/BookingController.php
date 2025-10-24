@@ -755,10 +755,14 @@ class BookingController extends Controller
                         $displayStatus = 'waitlist_available';
                     }
 
-                    // Get customer information from cart transaction
+                    // Get customer information from cart item and transaction
                     $transaction = $conflictingCartItem->cartTransaction;
-                    $effectiveUser = $transaction->bookingForUser ?? $transaction->user;
-                    $displayName = $transaction->booking_for_user_name ?? $conflictingCartItem->admin_notes ?? null;
+                    // booking_for_user_id is on the cart_item, not cart_transaction
+                    $effectiveUser = $conflictingCartItem->bookingForUser ?? $transaction->user;
+                    // Display name priority: cart item's booking_for_user_name > admin_notes > user's name
+                    $displayName = $conflictingCartItem->booking_for_user_name
+                        ?? $conflictingCartItem->admin_notes
+                        ?? ($effectiveUser ? $effectiveUser->name : null);
                     $createdByUser = $transaction->user;
                     $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
 
@@ -783,7 +787,7 @@ class BookingController extends Controller
                         'payment_status' => $paymentStatus,
                         // Customer information
                         'display_name' => $displayName,
-                        'booking_for_user_name' => $transaction->booking_for_user_name,
+                        'booking_for_user_name' => $conflictingCartItem->booking_for_user_name,
                         'admin_notes' => $conflictingCartItem->admin_notes,
                         'user_name' => $transaction->user->name ?? null,
                         'user_email' => $effectiveUser->email ?? null,
@@ -830,7 +834,10 @@ class BookingController extends Controller
 
                     // Get customer information from booking
                     $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
-                    $bookingDisplayName = $conflictingBooking->booking_for_user_name ?? $conflictingBooking->admin_notes ?? null;
+                    // Display name priority: booking_for_user_name > admin_notes > user's name
+                    $bookingDisplayName = $conflictingBooking->booking_for_user_name
+                        ?? $conflictingBooking->admin_notes
+                        ?? ($bookingEffectiveUser ? $bookingEffectiveUser->name : null);
                     $bookingCreatedByUser = $conflictingBooking->user;
                     $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
 
