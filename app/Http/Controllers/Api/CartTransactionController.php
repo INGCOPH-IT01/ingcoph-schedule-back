@@ -69,7 +69,12 @@ class CartTransactionController extends Controller
                 'cartItems.bookings',
                 'cartItems.bookingForUser',
                 'bookings',
-                'approver'
+                'approver',
+                'waitlistEntries' => function($query) {
+                    $query->orderBy('position', 'asc');
+                },
+                'waitlistEntries.user',
+                'waitlistEntries.bookingForUser'
             ])
             ->whereIn('status', ['pending', 'completed'])
             ->whereHas('bookings'); // Only load transactions that have associated bookings
@@ -881,7 +886,7 @@ class CartTransactionController extends Controller
 
             // Load waitlist entries with user, court, and sport relationships
             $waitlistEntries = $transaction->waitlistEntries()
-                ->with(['user', 'court', 'sport'])
+                ->with(['user', 'bookingForUser', 'court', 'sport'])
                 ->orderBy('position', 'asc')
                 ->orderBy('created_at', 'asc')
                 ->get();
