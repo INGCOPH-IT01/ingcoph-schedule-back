@@ -790,12 +790,25 @@ class BookingController extends Controller
                     $isApproved = $approvalStatus === 'approved';
                     $isPaid = $paymentStatus === 'paid';
 
+                    // Get customer information from cart item and transaction
+                    $transaction = $conflictingCartItem->cartTransaction;
+                    // booking_for_user_id is on the cart_item, not cart_transaction
+                    $effectiveUser = $conflictingCartItem->bookingForUser ?? $transaction->user;
+                    // Display name priority: cart item's booking_for_user_name > admin_notes > user's name
+                    $displayName = $conflictingCartItem->booking_for_user_name
+                        ?? $conflictingCartItem->admin_notes
+                        ?? ($effectiveUser ? $effectiveUser->name : null);
+                    $createdByUser = $transaction->user;
+                    $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
+
                     // Determine the display type and status
+                    // Admin/Staff bookings are always considered booked (no approval check needed)
+                    // User bookings need approval AND payment to be booked
                     $displayType = 'waitlist_available'; // Default for pending
                     $displayStatus = 'pending_approval';
 
-                    if ($isApproved && $isPaid) {
-                        // Approved and paid = Truly booked
+                    if (($isApproved && $isPaid) || $isAdminBooking) {
+                        // Approved and paid (for users) OR admin/staff booking = Truly booked
                         $displayType = 'booked';
                         $displayStatus = 'approved';
                     } elseif (!$isApproved && $isPaid) {
@@ -808,17 +821,6 @@ class BookingController extends Controller
                         $displayStatus = 'waitlist_available';
                     }
 
-                    // Get customer information from cart item and transaction
-                    $transaction = $conflictingCartItem->cartTransaction;
-                    // booking_for_user_id is on the cart_item, not cart_transaction
-                    $effectiveUser = $conflictingCartItem->bookingForUser ?? $transaction->user;
-                    // Display name priority: cart item's booking_for_user_name > admin_notes > user's name
-                    $displayName = $conflictingCartItem->booking_for_user_name
-                        ?? $conflictingCartItem->admin_notes
-                        ?? ($effectiveUser ? $effectiveUser->name : null);
-                    $createdByUser = $transaction->user;
-                    $isAdminBooking = $createdByUser && in_array($createdByUser->role, ['admin', 'staff']);
-
                     // Show current 1-hour slot with booking info
                     $availableSlots[] = [
                         'start' => $currentTime->format('H:i'),
@@ -829,9 +831,9 @@ class BookingController extends Controller
                         'duration_hours' => 1,
                         'price' => $cartPrice,
                         'available' => false,
-                        'is_booked' => $isApproved && $isPaid, // Only true if approved AND paid
-                        'is_pending_approval' => !$isApproved && $isPaid, // Paid but pending
-                        'is_waitlist_available' => !($isApproved && $isPaid), // False only when fully booked (approved AND paid)
+                        'is_booked' => ($isApproved && $isPaid) || $isAdminBooking, // User bookings: approved AND paid; Admin/Staff bookings: always booked
+                        'is_pending_approval' => !$isApproved && $isPaid && !$isAdminBooking, // Paid but pending (user bookings only)
+                        'is_waitlist_available' => !(($isApproved && $isPaid) || $isAdminBooking), // False only when fully booked
                         'is_unpaid' => !$isPaid, // Flag for unpaid bookings
                         'cart_item_id' => $conflictingCartItem->id,
                         'type' => $displayType,
@@ -877,14 +879,6 @@ class BookingController extends Controller
                     $isBookingApproved = $bookingStatus === 'approved';
                     $isBookingPaid = $bookingPaymentStatus === 'paid';
 
-                    // Determine display type
-                    $bookingDisplayType = 'waitlist_available';
-                    if ($isBookingApproved && $isBookingPaid) {
-                        $bookingDisplayType = 'booking';
-                    } elseif (!$isBookingApproved && $isBookingPaid) {
-                        $bookingDisplayType = 'pending_approval';
-                    }
-
                     // Get customer information from booking
                     $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
                     // Display name priority: booking_for_user_name > admin_notes > user's name
@@ -893,6 +887,16 @@ class BookingController extends Controller
                         ?? ($bookingEffectiveUser ? $bookingEffectiveUser->name : null);
                     $bookingCreatedByUser = $conflictingBooking->user;
                     $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
+
+                    // Determine display type
+                    // Admin/Staff bookings are always considered booked (no approval check needed)
+                    // User bookings need approval AND payment to be booked
+                    $bookingDisplayType = 'waitlist_available';
+                    if (($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) {
+                        $bookingDisplayType = 'booking';
+                    } elseif (!$isBookingApproved && $isBookingPaid) {
+                        $bookingDisplayType = 'pending_approval';
+                    }
 
                     // Show current 1-hour slot with booking info
                     $availableSlots[] = [
@@ -904,9 +908,9 @@ class BookingController extends Controller
                         'duration_hours' => 1,
                         'price' => $bookingPrice,
                         'available' => false,
-                        'is_booked' => $isBookingApproved && $isBookingPaid,
-                        'is_pending_approval' => !$isBookingApproved && $isBookingPaid,
-                        'is_waitlist_available' => !($isBookingApproved && $isBookingPaid), // False only when fully booked
+                        'is_booked' => ($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking, // User bookings: approved AND paid; Admin/Staff bookings: always booked
+                        'is_pending_approval' => !$isBookingApproved && $isBookingPaid && !$isBookingAdminBooking, // Paid but pending (user bookings only)
+                        'is_waitlist_available' => !(($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking), // False only when fully booked
                         'is_unpaid' => !$isBookingPaid,
                         'booking_id' => $conflictingBooking->id,
                         'type' => $bookingDisplayType,
