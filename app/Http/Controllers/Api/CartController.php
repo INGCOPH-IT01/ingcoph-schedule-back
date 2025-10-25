@@ -151,6 +151,10 @@ class CartController extends Controller
                 'payment_status' => 'unpaid'
             ]);
 
+            // Track waitlisted items separately (Issue #11 fix)
+            $waitlistedItems = [];
+            $hasAnyWaitlist = false;
+
             foreach ($request->items as $item) {
                 // Check if item already exists in cart
                 $existingItem = CartItem::where('user_id', $userId)
@@ -166,14 +170,15 @@ class CartController extends Controller
                 }
 
                 // Check if time slot is still available
-                // Handle midnight crossing: if end_time < start_time, it means next day
+                // Handle midnight crossing: if end_time < start_time, it means next day (Issue #12 fix)
                 $startDateTime = $item['booking_date'] . ' ' . $item['start_time'];
 
                 // Check if slot crosses midnight (end time is before or equal to start time)
                 $startTime = \Carbon\Carbon::parse($item['start_time']);
                 $endTime = \Carbon\Carbon::parse($item['end_time']);
+                $crossesMidnight = $endTime->lte($startTime);
 
-                if ($endTime->lte($startTime)) {
+                if ($crossesMidnight) {
                     // Slot crosses midnight, so end time is on the next day
                     $endDate = \Carbon\Carbon::parse($item['booking_date'])->addDay()->format('Y-m-d');
                     $endDateTime = $endDate . ' ' . $item['end_time'];
@@ -181,42 +186,86 @@ class CartController extends Controller
                     $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
                 }
 
-                // Check for conflicting bookings - only check active bookings (exclude cancelled/rejected)
+                // FIX #12: Check for conflicting bookings with proper midnight crossing support
+                // We need to check bookings on both the start date and potentially the next day
                 $conflictingBooking = Booking::where('court_id', $item['court_id'])
-                    ->whereDate('start_time', $item['booking_date'])
                     ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
-                    ->where(function ($query) use ($startDateTime, $endDateTime) {
-                        $query->where(function ($q) use ($startDateTime, $endDateTime) {
-                            // Existing booking starts during new booking (exclusive boundaries)
-                            $q->where('start_time', '>=', $startDateTime)
-                              ->where('start_time', '<', $endDateTime);
-                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
-                            // Existing booking ends during new booking (exclusive boundaries)
-                            $q->where('end_time', '>', $startDateTime)
-                              ->where('end_time', '<=', $endDateTime);
-                        })->orWhere(function ($q) use ($startDateTime, $endDateTime) {
-                            // Existing booking completely contains new booking
-                            $q->where('start_time', '<=', $startDateTime)
-                              ->where('end_time', '>=', $endDateTime);
+                    ->where(function ($query) use ($startDateTime, $endDateTime, $item, $crossesMidnight) {
+                        // Check bookings that start on the same day as the requested slot
+                        $query->where(function ($q) use ($startDateTime, $endDateTime, $item) {
+                            $q->whereDate('start_time', $item['booking_date'])
+                              ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                  $sq->where(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      // Existing booking starts during new booking (exclusive boundaries)
+                                      $innerQ->where('start_time', '>=', $startDateTime)
+                                             ->where('start_time', '<', $endDateTime);
+                                  })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      // Existing booking ends during new booking (exclusive boundaries)
+                                      $innerQ->where('end_time', '>', $startDateTime)
+                                             ->where('end_time', '<=', $endDateTime);
+                                  })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      // Existing booking completely contains new booking
+                                      $innerQ->where('start_time', '<=', $startDateTime)
+                                             ->where('end_time', '>=', $endDateTime);
+                                  });
+                              });
                         });
+
+                        // If the new booking crosses midnight, also check previous day bookings
+                        if ($crossesMidnight) {
+                            $prevDate = \Carbon\Carbon::parse($item['booking_date'])->subDay()->format('Y-m-d');
+                            $query->orWhere(function ($q) use ($startDateTime, $endDateTime, $prevDate) {
+                                $q->whereDate('start_time', $prevDate)
+                                  ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                      $sq->where(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('start_time', '>=', $startDateTime)
+                                                 ->where('start_time', '<', $endDateTime);
+                                      })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('end_time', '>', $startDateTime)
+                                                 ->where('end_time', '<=', $endDateTime);
+                                      })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('start_time', '<=', $startDateTime)
+                                                 ->where('end_time', '>=', $endDateTime);
+                                      });
+                                  });
+                            });
+                        }
                     })
                     ->first();
 
-                // Check for conflicting cart items (pending bookings via cart system)
+                // FIX #12: Check for conflicting cart items with proper midnight crossing support
                 $conflictingCartItems = CartItem::where('court_id', $item['court_id'])
-                    ->where('booking_date', $item['booking_date'])
                     ->where('status', 'pending')
-                    ->where(function ($query) use ($item) {
-                        $query->where(function ($q) use ($item) {
-                            $q->where('start_time', '>=', $item['start_time'])
-                              ->where('start_time', '<', $item['end_time']);
-                        })->orWhere(function ($q) use ($item) {
-                            $q->where('end_time', '>', $item['start_time'])
-                              ->where('end_time', '<=', $item['end_time']);
-                        })->orWhere(function ($q) use ($item) {
-                            $q->where('start_time', '<=', $item['start_time'])
-                              ->where('end_time', '>=', $item['end_time']);
+                    ->where(function ($query) use ($item, $startDateTime, $endDateTime, $crossesMidnight) {
+                        // Check cart items on the same date
+                        $query->where(function ($q) use ($item, $startDateTime, $endDateTime) {
+                            $q->where('booking_date', $item['booking_date'])
+                              ->where(function ($sq) use ($startDateTime, $endDateTime, $item) {
+                                  // Use full datetime comparison for accuracy
+                                  $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                      [$startDateTime, $endDateTime])
+                                     ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                      [$startDateTime, $endDateTime])
+                                     ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                      [$startDateTime, $endDateTime]);
+                              });
                         });
+
+                        // If the new booking crosses midnight, also check previous day cart items
+                        if ($crossesMidnight) {
+                            $prevDate = \Carbon\Carbon::parse($item['booking_date'])->subDay()->format('Y-m-d');
+                            $query->orWhere(function ($q) use ($prevDate, $startDateTime, $endDateTime) {
+                                $q->where('booking_date', $prevDate)
+                                  ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                      $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                          [$startDateTime, $endDateTime])
+                                         ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                          [$startDateTime, $endDateTime])
+                                         ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                          [$startDateTime, $endDateTime]);
+                                  });
+                            });
+                        }
                     })
                     ->with('cartTransaction.user')
                     ->get();
@@ -286,7 +335,7 @@ class CartController extends Controller
                     }
                 }
 
-                // If there's a booking pending approval, add ALL users to waitlist
+                // FIX #11: If there's a booking pending approval, add to waitlist but continue processing other items
                 // This includes admins and staff - ensures fairness, no one can skip the line
                 if ($isPendingApprovalBooking) {
                     // Use parent booking's times (not the incoming item's times)
@@ -338,20 +387,18 @@ class CartController extends Controller
                     ]);
 
                     // Update cart transaction total price
-                    $cartTransaction->update([
-                        'total_price' => $cartTransaction->total_price + floatval($item['price'])
-                    ]);
+                    $totalPrice += floatval($item['price']);
 
-                    DB::commit();
-
-                    return response()->json([
-                        'message' => 'This time slot is currently pending approval for another user. You have been added to the waitlist.',
-                        'waitlisted' => true,
+                    // Track waitlisted items for comprehensive response
+                    $waitlistedItems[] = [
                         'waitlist_entry' => $waitlistEntry->load(['court', 'sport']),
                         'cart_item' => $cartItem->load(['court', 'sport', 'court.images']),
-                        'cart_transaction' => $cartTransaction->fresh()->load(['cartItems', 'user']),
                         'position' => $nextPosition
-                    ], 200);
+                    ];
+                    $hasAnyWaitlist = true;
+
+                    // Continue to next item instead of returning immediately
+                    continue;
                 }
 
                 // If the slot is taken by approved/paid bookings (not pending approval), reject
@@ -408,11 +455,56 @@ class CartController extends Controller
 
             DB::commit();
 
-            return response()->json([
-                'message' => 'Items added to cart successfully',
-                'items' => $addedItems,
-                'cart_transaction' => $cartTransaction->load(['cartItems', 'user'])
-            ], 201);
+            // FIX #11: Return comprehensive response handling both regular and waitlisted items
+            if ($hasAnyWaitlist && count($addedItems) === 0) {
+                // All items were waitlisted - return waitlist-specific response
+                $firstWaitlist = $waitlistedItems[0];
+                return response()->json([
+                    'message' => count($waitlistedItems) > 1
+                        ? 'All time slots are currently pending approval. You have been added to the waitlist.'
+                        : 'This time slot is currently pending approval for another user. You have been added to the waitlist.',
+                    'waitlisted' => true,
+                    'waitlist_entry' => $firstWaitlist['waitlist_entry'],
+                    'waitlist_entries' => array_map(function($item) {
+                        return $item['waitlist_entry'];
+                    }, $waitlistedItems),
+                    'cart_item' => $firstWaitlist['cart_item'],
+                    'cart_items' => array_map(function($item) {
+                        return $item['cart_item'];
+                    }, $waitlistedItems),
+                    'cart_transaction' => $cartTransaction->fresh()->load(['cartItems', 'user']),
+                    'position' => $firstWaitlist['position'],
+                    'total_waitlisted' => count($waitlistedItems)
+                ], 200);
+            } elseif ($hasAnyWaitlist && count($addedItems) > 0) {
+                // Mixed - some items added normally, some waitlisted
+                return response()->json([
+                    'message' => sprintf(
+                        'Successfully added %d item(s) to cart. %d item(s) added to waitlist.',
+                        count($addedItems),
+                        count($waitlistedItems)
+                    ),
+                    'items' => $addedItems,
+                    'waitlisted_items' => array_map(function($item) {
+                        return $item['cart_item'];
+                    }, $waitlistedItems),
+                    'waitlist_entries' => array_map(function($item) {
+                        return $item['waitlist_entry'];
+                    }, $waitlistedItems),
+                    'cart_transaction' => $cartTransaction->load(['cartItems', 'user']),
+                    'has_waitlist' => true,
+                    'total_added' => count($addedItems),
+                    'total_waitlisted' => count($waitlistedItems)
+                ], 201);
+            } else {
+                // All items added successfully (no waitlist)
+                return response()->json([
+                    'message' => 'Items added to cart successfully',
+                    'items' => $addedItems,
+                    'cart_transaction' => $cartTransaction->load(['cartItems', 'user']),
+                    'has_waitlist' => false
+                ], 201);
+            }
 
         } catch (\Exception $e) {
             DB::rollBack();
