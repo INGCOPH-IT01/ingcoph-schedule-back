@@ -156,11 +156,14 @@ class CartController extends Controller
             $hasAnyWaitlist = false;
 
             foreach ($request->items as $item) {
+                // Ensure booking_date is in Y-m-d format only (strip any time component)
+                $bookingDate = \Carbon\Carbon::parse($item['booking_date'])->format('Y-m-d');
+
                 // Check if item already exists in cart
                 $existingItem = CartItem::where('user_id', $userId)
                     ->where('cart_transaction_id', $cartTransaction->id)
                     ->where('court_id', $item['court_id'])
-                    ->where('booking_date', $item['booking_date'])
+                    ->where('booking_date', $bookingDate)
                     ->where('start_time', $item['start_time'])
                     ->where('end_time', $item['end_time'])
                     ->first();
@@ -171,7 +174,7 @@ class CartController extends Controller
 
                 // Check if time slot is still available
                 // Handle midnight crossing: if end_time < start_time, it means next day (Issue #12 fix)
-                $startDateTime = $item['booking_date'] . ' ' . $item['start_time'];
+                $startDateTime = $bookingDate . ' ' . $item['start_time'];
 
                 // Check if slot crosses midnight (end time is before or equal to start time)
                 $startTime = \Carbon\Carbon::parse($item['start_time']);
@@ -180,20 +183,20 @@ class CartController extends Controller
 
                 if ($crossesMidnight) {
                     // Slot crosses midnight, so end time is on the next day
-                    $endDate = \Carbon\Carbon::parse($item['booking_date'])->addDay()->format('Y-m-d');
+                    $endDate = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d');
                     $endDateTime = $endDate . ' ' . $item['end_time'];
                 } else {
-                    $endDateTime = $item['booking_date'] . ' ' . $item['end_time'];
+                    $endDateTime = $bookingDate . ' ' . $item['end_time'];
                 }
 
                 // FIX #12: Check for conflicting bookings with proper midnight crossing support
                 // We need to check bookings on both the start date and potentially the next day
                 $conflictingBooking = Booking::where('court_id', $item['court_id'])
                     ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
-                    ->where(function ($query) use ($startDateTime, $endDateTime, $item, $crossesMidnight) {
+                    ->where(function ($query) use ($startDateTime, $endDateTime, $bookingDate, $crossesMidnight) {
                         // Check bookings that start on the same day as the requested slot
-                        $query->where(function ($q) use ($startDateTime, $endDateTime, $item) {
-                            $q->whereDate('start_time', $item['booking_date'])
+                        $query->where(function ($q) use ($startDateTime, $endDateTime, $bookingDate) {
+                            $q->whereDate('start_time', $bookingDate)
                               ->where(function ($sq) use ($startDateTime, $endDateTime) {
                                   $sq->where(function ($innerQ) use ($startDateTime, $endDateTime) {
                                       // Existing booking starts during new booking (exclusive boundaries)
@@ -213,7 +216,7 @@ class CartController extends Controller
 
                         // If the new booking crosses midnight, also check previous day bookings
                         if ($crossesMidnight) {
-                            $prevDate = \Carbon\Carbon::parse($item['booking_date'])->subDay()->format('Y-m-d');
+                            $prevDate = \Carbon\Carbon::parse($bookingDate)->subDay()->format('Y-m-d');
                             $query->orWhere(function ($q) use ($startDateTime, $endDateTime, $prevDate) {
                                 $q->whereDate('start_time', $prevDate)
                                   ->where(function ($sq) use ($startDateTime, $endDateTime) {
@@ -236,11 +239,11 @@ class CartController extends Controller
                 // FIX #12: Check for conflicting cart items with proper midnight crossing support
                 $conflictingCartItems = CartItem::where('court_id', $item['court_id'])
                     ->where('status', 'pending')
-                    ->where(function ($query) use ($item, $startDateTime, $endDateTime, $crossesMidnight) {
+                    ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
                         // Check cart items on the same date
-                        $query->where(function ($q) use ($item, $startDateTime, $endDateTime) {
-                            $q->where('booking_date', $item['booking_date'])
-                              ->where(function ($sq) use ($startDateTime, $endDateTime, $item) {
+                        $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
+                            $q->where('booking_date', $bookingDate)
+                              ->where(function ($sq) use ($startDateTime, $endDateTime) {
                                   // Use full datetime comparison for accuracy
                                   $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
                                       [$startDateTime, $endDateTime])
@@ -253,7 +256,7 @@ class CartController extends Controller
 
                         // If the new booking crosses midnight, also check previous day cart items
                         if ($crossesMidnight) {
-                            $prevDate = \Carbon\Carbon::parse($item['booking_date'])->subDay()->format('Y-m-d');
+                            $prevDate = \Carbon\Carbon::parse($bookingDate)->subDay()->format('Y-m-d');
                             $query->orWhere(function ($q) use ($prevDate, $startDateTime, $endDateTime) {
                                 $q->where('booking_date', $prevDate)
                                   ->where(function ($sq) use ($startDateTime, $endDateTime) {
@@ -305,15 +308,16 @@ class CartController extends Controller
 
                         // Use the cart item's times to construct parent datetime
                         if (!$parentStartTime) {
-                            $parentStartTime = $cartItem->booking_date . ' ' . $cartItem->start_time;
+                            $cartItemDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+                            $parentStartTime = $cartItemDate . ' ' . $cartItem->start_time;
                             // Handle midnight crossing
                             $cartStartTime = \Carbon\Carbon::parse($cartItem->start_time);
                             $cartEndTime = \Carbon\Carbon::parse($cartItem->end_time);
                             if ($cartEndTime->lte($cartStartTime)) {
-                                $endDate = \Carbon\Carbon::parse($cartItem->booking_date)->addDay()->format('Y-m-d');
+                                $endDate = \Carbon\Carbon::parse($cartItemDate)->addDay()->format('Y-m-d');
                                 $parentEndTime = $endDate . ' ' . $cartItem->end_time;
                             } else {
-                                $parentEndTime = $cartItem->booking_date . ' ' . $cartItem->end_time;
+                                $parentEndTime = $cartItemDate . ' ' . $cartItem->end_time;
                             }
                         }
 
@@ -375,7 +379,7 @@ class CartController extends Controller
                         'booking_waitlist_id' => $waitlistEntry->id, // Link to waitlist!
                         'court_id' => $item['court_id'],
                         'sport_id' => $item['sport_id'],
-                        'booking_date' => $item['booking_date'],
+                        'booking_date' => $bookingDate,
                         'start_time' => $item['start_time'],
                         'end_time' => $item['end_time'],
                         'price' => $item['price'],
@@ -433,7 +437,7 @@ class CartController extends Controller
                     'cart_transaction_id' => $cartTransaction->id,
                     'court_id' => $item['court_id'],
                     'sport_id' => $item['sport_id'],
-                    'booking_date' => $item['booking_date'],
+                    'booking_date' => $bookingDate,
                     'start_time' => $item['start_time'],
                     'end_time' => $item['end_time'],
                     'price' => $item['price'],
