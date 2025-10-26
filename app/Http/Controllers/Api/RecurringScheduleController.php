@@ -50,6 +50,17 @@ class RecurringScheduleController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        // Company setting: block regular users from creating recurring schedules if disabled
+        if (Auth::user() && Auth::user()->role === 'user') {
+            $userBookingEnabled = \App\Models\CompanySetting::get('user_booking_enabled', '1') === '1';
+            if (!$userBookingEnabled) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking creation is currently disabled for user accounts. Please contact the administrator.'
+                ], 403);
+            }
+        }
+
         $validator = Validator::make($request->all(), [
             'court_id' => 'required|exists:courts,id',
             'title' => 'required|string|max:255',
@@ -81,7 +92,7 @@ class RecurringScheduleController extends Controller
 
         $data = $validator->validated();
         $data['user_id'] = Auth::id();
-        
+
         // Calculate duration based on recurrence type
         if (in_array($data['recurrence_type'], ['weekly_multiple_times', 'yearly_multiple_times'])) {
             // For multiple times, set duration to 0 (will be calculated per day)
@@ -170,7 +181,7 @@ class RecurringScheduleController extends Controller
         // Recalculate duration if times are updated
         if (isset($data['start_time']) || isset($data['end_time']) || isset($data['recurrence_type'])) {
             $recurrenceType = $data['recurrence_type'] ?? $recurringSchedule->recurrence_type;
-            
+
             if (in_array($recurrenceType, ['weekly_multiple_times', 'yearly_multiple_times'])) {
                 $data['duration_hours'] = 0; // Will be calculated per day
             } else {
@@ -279,7 +290,7 @@ class RecurringScheduleController extends Controller
     private function generateBookingsForEntireSchedule(RecurringSchedule $schedule): void
     {
         $startDate = Carbon::parse($schedule->start_date);
-        
+
         // Determine end date
         if ($schedule->end_date) {
             $endDate = Carbon::parse($schedule->end_date);

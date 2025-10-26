@@ -62,6 +62,17 @@ class BookingController extends Controller
      */
     public function store(Request $request)
     {
+        // Company setting: block regular users from creating bookings if disabled
+        if ($request->user()->isUser()) {
+            $userBookingEnabled = \App\Models\CompanySetting::get('user_booking_enabled', '1') === '1';
+            if (!$userBookingEnabled) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Booking creation is currently disabled for user accounts. Please contact the administrator.'
+                ], 403);
+            }
+        }
+
 
         $validator = Validator::make($request->all(), [
             'court_id' => 'required|exists:courts,id',
