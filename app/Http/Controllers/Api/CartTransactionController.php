@@ -76,8 +76,9 @@ class CartTransactionController extends Controller
                 'waitlistEntries.user',
                 'waitlistEntries.bookingForUser'
             ])
-            ->whereIn('status', ['pending', 'completed'])
-            ->whereHas('bookings'); // Only load transactions that have associated bookings
+            ->whereIn('status', ['pending', 'completed']);
+            // Removed ->whereHas('bookings') filter to show ALL transactions, including those with data integrity issues
+            // This allows admins to identify and fix transactions that have cart items but no bookings
 
         // Filter by booking date range if provided
         if ($request->filled('date_from')) {
