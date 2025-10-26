@@ -976,19 +976,8 @@ class CartController extends Controller
             $approvalStatus = $hasWaitlistEntry ? 'pending_waitlist' : 'pending';
             $approvedAt = null; // Waitlist bookings need admin approval, not auto-approved
 
-            // Update the existing cart transaction with payment info
-            $cartTransaction->update([
-                'total_price' => $totalPrice,
-                'status' => 'completed',
-                'payment_method' => $paymentMethod,
-                'payment_status' => $paymentStatus,
-                'proof_of_payment' => $proofOfPaymentPath, // Now stores file path, not base64
-                'paid_at' => $paidAt,
-                'approval_status' => $approvalStatus,
-                'approved_at' => $approvedAt
-            ]);
-
-            // Create bookings from grouped items
+            // IMPORTANT: Create bookings BEFORE updating cart transaction/items status
+            // This ensures data integrity - if booking creation fails, nothing is marked as completed
             $createdBookings = [];
             foreach ($groupedBookings as $group) {
                 // Handle midnight crossing when creating datetime strings
@@ -1084,6 +1073,19 @@ class CartController extends Controller
                 // Broadcast booking created event in real-time
                 broadcast(new BookingCreated($booking))->toOthers();
             }
+
+            // IMPORTANT: Update cart transaction status ONLY AFTER bookings are successfully created
+            // This ensures data integrity - cart is only marked 'completed' if bookings exist
+            $cartTransaction->update([
+                'total_price' => $totalPrice,
+                'status' => 'completed',
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
+                'proof_of_payment' => $proofOfPaymentPath,
+                'paid_at' => $paidAt,
+                'approval_status' => $approvalStatus,
+                'approved_at' => $approvedAt
+            ]);
 
             // Mark items as completed instead of deleting them
             if ($request->has('selected_items') && !empty($request->selected_items)) {
