@@ -97,6 +97,16 @@ class CartController extends Controller
      */
     public function store(Request $request)
     {
+        // Company setting: block regular users from creating bookings via cart if disabled
+        if ($request->user()->role === 'user') {
+            $userBookingEnabled = \App\Models\CompanySetting::get('user_booking_enabled', '1') === '1';
+            if (!$userBookingEnabled) {
+                return response()->json([
+                    'message' => 'Booking creation is currently disabled for user accounts. Please contact the administrator.'
+                ], 403);
+            }
+        }
+
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.court_id' => 'required|exists:courts,id',
@@ -708,6 +718,16 @@ class CartController extends Controller
      */
     public function checkout(Request $request)
     {
+        // Company setting: block regular users from checking out (creating bookings) if disabled
+        if ($request->user()->role === 'user') {
+            $userBookingEnabled = \App\Models\CompanySetting::get('user_booking_enabled', '1') === '1';
+            if (!$userBookingEnabled) {
+                return response()->json([
+                    'message' => 'Booking creation is currently disabled for user accounts. Please contact the administrator.'
+                ], 403);
+            }
+        }
+
         // Check if user is Admin or Staff
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 

@@ -70,6 +70,13 @@ class CompanySettingController extends Controller
                 $settings['dashboard_show_recent_bookings'] = $settings['dashboard_show_recent_bookings'] === '1';
             }
 
+            // Booking rules
+            if (!isset($settings['user_booking_enabled'])) {
+                $settings['user_booking_enabled'] = true;
+            } else {
+                $settings['user_booking_enabled'] = $settings['user_booking_enabled'] === '1';
+            }
+
             // Payment settings
             if (!isset($settings['payment_gcash_number'])) {
                 $settings['payment_gcash_number'] = '0917-123-4567';
@@ -186,6 +193,8 @@ class CompanySettingController extends Controller
             'dashboard_announcement' => 'nullable|string|max:1000',
             'dashboard_show_stats' => 'nullable|boolean',
             'dashboard_show_recent_bookings' => 'nullable|boolean',
+            // Booking rules
+            'user_booking_enabled' => 'nullable|boolean',
             // Payment settings
             'payment_gcash_number' => 'nullable|string|max:50',
             'payment_gcash_name' => 'nullable|string|max:255',
@@ -278,6 +287,11 @@ class CompanySettingController extends Controller
             }
             if ($request->has('dashboard_show_recent_bookings')) {
                 CompanySetting::set('dashboard_show_recent_bookings', $request->dashboard_show_recent_bookings ? '1' : '0');
+            }
+
+            // Save booking rules
+            if ($request->has('user_booking_enabled')) {
+                CompanySetting::set('user_booking_enabled', $request->user_booking_enabled ? '1' : '0');
             }
 
             // Save background color settings
@@ -377,6 +391,7 @@ class CompanySettingController extends Controller
                 'dashboard_announcement' => CompanySetting::get('dashboard_announcement', ''),
                 'dashboard_show_stats' => CompanySetting::get('dashboard_show_stats', '1') === '1',
                 'dashboard_show_recent_bookings' => CompanySetting::get('dashboard_show_recent_bookings', '1') === '1',
+                'user_booking_enabled' => CompanySetting::get('user_booking_enabled', '1') === '1',
                 'bg_secondary_color' => CompanySetting::get('bg_secondary_color', '#FFEBEE'),
                 'bg_accent_color' => CompanySetting::get('bg_accent_color', '#FFCDD2'),
                 'bg_overlay_color' => CompanySetting::get('bg_overlay_color', 'rgba(183, 28, 28, 0.08)'),
