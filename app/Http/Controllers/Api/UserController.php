@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Validator;
 class UserController extends Controller
 {
     /**
-     * Get all users (admin only)
+     * Get all users (admin and staff)
      */
     public function index(Request $request)
     {

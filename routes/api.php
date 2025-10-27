@@ -160,10 +160,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/holidays/check-date', [HolidayController::class, 'checkDate']);
     });
 
+    // User list route (admin and staff) - needed for "Booking For" dropdown
+    Route::middleware('admin.or.staff')->group(function () {
+        Route::get('/admin/users', [UserController::class, 'index']);
+    });
+
     // Admin-only routes (User Management and Company Settings)
     Route::middleware('admin')->group(function () {
         // Admin user management routes
-        Route::get('/admin/users', [UserController::class, 'index']);
         Route::get('/admin/users/stats', [UserController::class, 'stats']);
         Route::post('/admin/users', [UserController::class, 'store']);
         Route::get('/admin/users/{id}', [UserController::class, 'show']);
