@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\CartTransactionResource;
 use App\Models\CartTransaction;
 use App\Models\Booking;
 use App\Models\BookingWaitlist;
@@ -49,7 +50,7 @@ class CartTransactionController extends Controller
             ->orderBy('created_at', 'asc')
             ->get();
 
-        return response()->json($transactions);
+        return CartTransactionResource::collection($transactions);
     }
 
     /**
@@ -131,7 +132,7 @@ class CartTransactionController extends Controller
 
         $transactions = $query->get();
 
-        return response()->json($transactions);
+        return CartTransactionResource::collection($transactions);
     }
 
     /**
@@ -166,7 +167,7 @@ class CartTransactionController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        return response()->json($transaction);
+        return new CartTransactionResource($transaction);
     }
 
     /**

@@ -28,7 +28,7 @@ class CartItem extends Model
     ];
 
     protected $casts = [
-        'booking_date' => 'date',
+        'booking_date' => 'date:Y-m-d',
         'price' => 'decimal:2',
         'number_of_players' => 'integer'
     ];
