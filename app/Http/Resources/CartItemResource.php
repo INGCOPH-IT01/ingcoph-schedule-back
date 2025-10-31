@@ -24,7 +24,8 @@ class CartItemResource extends JsonResource
             'booking_for_user_name' => $this->booking_for_user_name,
 
             // Format booking_date as date only (YYYY-MM-DD) - no timezone conversion
-            'booking_date' => $this->booking_date,
+            'booking_date' => $this->booking_date ?
+                (\Carbon\Carbon::parse($this->booking_date)->format('Y-m-d')) : null,
 
             'start_time' => $this->start_time,
             'end_time' => $this->end_time,
