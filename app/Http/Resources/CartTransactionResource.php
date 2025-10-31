@@ -29,10 +29,11 @@ class CartTransactionResource extends JsonResource
             'rejection_reason' => $this->rejection_reason,
             'qr_code' => $this->qr_code,
 
-            // Format created_at and updated_at as date only (no timezone conversion)
-            'created_at' => $this->created_at ? $this->created_at->format('Y-m-d') : null,
-            'updated_at' => $this->updated_at ? $this->updated_at->format('Y-m-d') : null,
+            // Format timestamps with full date and time
+            'created_at' => $this->created_at ? $this->created_at->format('Y-m-d H:i:s') : null,
+            'updated_at' => $this->updated_at ? $this->updated_at->format('Y-m-d H:i:s') : null,
             'paid_at' => $this->paid_at ? $this->paid_at->format('Y-m-d H:i:s') : null,
+            'attendance_status' => $this->attendance_status,
 
             // Include relationships
             'user' => $this->whenLoaded('user'),

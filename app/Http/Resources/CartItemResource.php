@@ -35,9 +35,9 @@ class CartItemResource extends JsonResource
             'notes' => $this->notes,
             'admin_notes' => $this->admin_notes,
 
-            // Format timestamps as date only for display
-            'created_at' => $this->created_at ? $this->created_at->format('Y-m-d') : null,
-            'updated_at' => $this->updated_at ? $this->updated_at->format('Y-m-d') : null,
+            // Format timestamps with full date and time
+            'created_at' => $this->created_at ? $this->created_at->format('Y-m-d H:i:s') : null,
+            'updated_at' => $this->updated_at ? $this->updated_at->format('Y-m-d H:i:s') : null,
 
             // Include relationships
             'court' => $this->whenLoaded('court'),
