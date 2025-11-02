@@ -305,12 +305,14 @@ class BookingController extends Controller
             ], 422);
         }
 
-        // Check if user owns this booking, is the booking_for_user, or is admin
+        // Check if user owns this booking, is the booking_for_user, or is admin/staff
         $isBookingOwner = $booking->user_id === $request->user()->id;
         $isBookingForUser = $booking->booking_for_user_id === $request->user()->id;
         $isAdmin = $request->user()->isAdmin();
+        $isStaff = $request->user()->isStaff();
+        $isAdminOrStaff = $isAdmin || $isStaff;
 
-        if (!$isBookingOwner && !$isBookingForUser && !$isAdmin) {
+        if (!$isBookingOwner && !$isBookingForUser && !$isAdminOrStaff) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthorized to update this booking'
@@ -323,6 +325,7 @@ class BookingController extends Controller
                         'total_price' => 'required|numeric|min:0',
                         'status' => 'required|in:pending,approved,rejected,cancelled,completed,recurring_schedule',
                         'notes' => 'nullable|string|max:1000',
+                        'admin_notes' => 'nullable|string|max:1000',
                         'frequency_type' => 'nullable|string|in:once,daily,weekly,monthly,yearly',
                         'frequency_days' => 'nullable|array',
                         'frequency_times' => 'nullable|array',
@@ -331,8 +334,8 @@ class BookingController extends Controller
                         'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer',
                     ];
 
-                    // Only admins can change court_id
-                    if ($isAdmin && $request->has('court_id')) {
+                    // Only admins/staff can change court_id
+                    if ($isAdminOrStaff && $request->has('court_id')) {
                         $validationRules['court_id'] = 'required|exists:courts,id';
                     }
 
@@ -384,6 +387,11 @@ class BookingController extends Controller
                 'status',
                 'notes',
             ];
+
+            // Admin/staff can update admin_notes even for cancelled bookings
+            if ($isAdminOrStaff && $request->has('admin_notes')) {
+                $onyFields[] = 'admin_notes';
+            }
         }else{
             $onyFields = [
                 'start_time',
@@ -399,8 +407,13 @@ class BookingController extends Controller
                 'payment_method'
             ];
 
-            // Only admins can update court_id
-            if ($isAdmin && $request->has('court_id')) {
+            // Admin/staff can update admin_notes
+            if ($isAdminOrStaff && $request->has('admin_notes')) {
+                $onyFields[] = 'admin_notes';
+            }
+
+            // Only admins/staff can update court_id
+            if ($isAdminOrStaff && $request->has('court_id')) {
                 $onyFields[] = 'court_id';
             }
         }
