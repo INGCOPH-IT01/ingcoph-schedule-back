@@ -475,10 +475,10 @@ class BookingController extends Controller
             ], 422);
         }
 
-        try {
-            $uploadedPaths = [];
+        $uploadedPaths = [];
 
-            // Store multiple uploaded files
+        try {
+            // Upload files first (before database transaction)
             foreach ($request->file('proof_of_payment') as $index => $file) {
                 $filename = 'proof_' . $booking->id . '_' . time() . '_' . $index . '.' . $file->getClientOriginalExtension();
                 $path = $file->storeAs('proofs', $filename, 'public');
@@ -505,38 +505,61 @@ class BookingController extends Controller
                     : 'gcash';
             }
 
-            // Update booking with proof of payment path, payment method, and mark as paid
-            $booking->update([
-                'proof_of_payment' => $proofOfPaymentJson,
-                'payment_method' => $paymentMethod,
-                'payment_status' => 'paid',
-                'paid_at' => now()
-            ]);
-
-            // Also update the cart transaction if it exists
-            if ($booking->cart_transaction_id) {
-                $cartTransaction = \App\Models\CartTransaction::find($booking->cart_transaction_id);
-                if ($cartTransaction && $cartTransaction->payment_status !== 'paid') {
-                    $cartTransaction->update([
-                        'payment_status' => 'paid',
-                        'payment_method' => $paymentMethod,
-                        'proof_of_payment' => $proofOfPaymentJson,
-                        'paid_at' => now()
-                    ]);
-                }
-            }
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Proof of payment uploaded successfully. Booking is now marked as paid.',
-                'data' => [
+            // Wrap database updates in transaction for atomicity
+            DB::beginTransaction();
+            try {
+                // Update booking with proof of payment path, payment method, and mark as paid
+                $booking->update([
                     'proof_of_payment' => $proofOfPaymentJson,
-                    'proof_of_payment_files' => $uploadedPaths,
                     'payment_method' => $paymentMethod,
                     'payment_status' => 'paid',
-                    'paid_at' => $booking->paid_at
-                ]
-            ]);
+                    'paid_at' => now()
+                ]);
+
+                // Also update the cart transaction if it exists
+                if ($booking->cart_transaction_id) {
+                    $cartTransaction = \App\Models\CartTransaction::find($booking->cart_transaction_id);
+                    if ($cartTransaction && $cartTransaction->payment_status !== 'paid') {
+                        $cartTransaction->update([
+                            'payment_status' => 'paid',
+                            'payment_method' => $paymentMethod,
+                            'proof_of_payment' => $proofOfPaymentJson,
+                            'paid_at' => now()
+                        ]);
+                    }
+                }
+
+                // Commit all changes atomically
+                DB::commit();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Proof of payment uploaded successfully. Booking is now marked as paid.',
+                    'data' => [
+                        'proof_of_payment' => $proofOfPaymentJson,
+                        'proof_of_payment_files' => $uploadedPaths,
+                        'payment_method' => $paymentMethod,
+                        'payment_status' => 'paid',
+                        'paid_at' => $booking->paid_at
+                    ]
+                ]);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+
+                // Clean up uploaded files on database failure
+                foreach ($uploadedPaths as $path) {
+                    \Storage::disk('public')->delete($path);
+                }
+
+                Log::error('Failed to update payment status in database', [
+                    'booking_id' => $id,
+                    'error' => $e->getMessage()
+                ]);
+
+                throw $e;
+            }
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
