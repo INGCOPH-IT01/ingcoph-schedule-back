@@ -1254,15 +1254,15 @@ class CartController extends Controller
     }
 
     /**
-     * Update a cart item (admin only - for updating court)
+     * Update a cart item (admin and staff - for updating court/time)
      */
     public function updateCartItem(Request $request, $id)
     {
-        // Only admins can update cart items
-        if (!$request->user()->isAdmin()) {
+        // Only admins and staff can update cart items
+        if (!$request->user()->isAdmin() && !$request->user()->isStaff()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized. Admin privileges required.'
+                'message' => 'Unauthorized. Admin or staff privileges required.'
             ], 403);
         }
 
@@ -1283,7 +1283,9 @@ class CartController extends Controller
                 'court_id' => 'sometimes|required|exists:courts,id',
                 'booking_date' => 'sometimes|required|date',
                 'start_time' => 'sometimes|required|date_format:H:i',
-                'end_time' => 'sometimes|required|date_format:H:i'
+                'end_time' => 'sometimes|required|date_format:H:i',
+                'notes' => 'sometimes|nullable|string|max:1000',
+                'admin_notes' => 'sometimes|nullable|string|max:1000'
             ]);
 
             if ($validator->fails()) {
@@ -1402,6 +1404,12 @@ class CartController extends Controller
             if ($request->has('end_time')) {
                 $updateData['end_time'] = $endTime;
             }
+            if ($request->has('notes')) {
+                $updateData['notes'] = $request->notes;
+            }
+            if ($request->has('admin_notes')) {
+                $updateData['admin_notes'] = $request->admin_notes;
+            }
 
             // Update the cart item
             $cartItem->update($updateData);
@@ -1461,15 +1469,15 @@ class CartController extends Controller
     }
 
     /**
-     * Delete a cart item (admin only - for removing time slots)
+     * Delete a cart item (admin and staff - for removing time slots)
      */
     public function deleteCartItem(Request $request, $id)
     {
-        // Only admins can delete cart items
-        if (!$request->user()->isAdmin()) {
+        // Only admins and staff can delete cart items
+        if (!$request->user()->isAdmin() && !$request->user()->isStaff()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized. Admin privileges required.'
+                'message' => 'Unauthorized. Admin or staff privileges required.'
             ], 403);
         }
 

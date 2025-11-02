@@ -18,6 +18,11 @@ use Illuminate\Support\Facades\Mail;
 class CartTransactionController extends Controller
 {
     /**
+     * Store waitlist entries to notify after transaction commit
+     */
+    private $waitlistEntriesToNotify = [];
+
+    /**
      * Get all cart transactions for the authenticated user
      */
     public function index(Request $request)
@@ -175,124 +180,193 @@ class CartTransactionController extends Controller
      */
     public function approve(Request $request, $id)
     {
-        $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])->findOrFail($id);
+        // Wrap entire operation in transaction for atomicity
+        DB::beginTransaction();
+        try {
+            // Use lockForUpdate to prevent concurrent approvals
+            $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])
+                ->lockForUpdate()
+                ->findOrFail($id);
 
-        if ($transaction->approval_status === 'approved') {
-            return response()->json(['message' => 'Transaction already approved'], 400);
-        }
+            if ($transaction->approval_status === 'approved') {
+                DB::rollBack();
+                return response()->json(['message' => 'Transaction already approved'], 400);
+            }
 
-        // Generate QR code data for the transaction
-        $qrData = json_encode([
-            'transaction_id' => $transaction->id,
-            'user_id' => $transaction->user_id,
-            'user_name' => $transaction->user->name,
-            'total_price' => $transaction->total_price,
-            'payment_method' => $transaction->payment_method,
-            'approved_at' => now()->toDateTimeString(),
-            'type' => 'cart_transaction'
-        ]);
-
-        // Update the cart transaction status
-        $transaction->update([
-            'approval_status' => 'approved',
-            'approved_by' => $request->user()->id,
-            'approved_at' => now(),
-            'qr_code' => $qrData
-        ]);
-
-        // Update all associated bookings status to 'approved' with individual QR codes
-        foreach ($transaction->bookings as $booking) {
-            // Generate unique QR code for each booking
-            $bookingQrData = json_encode([
+            // Generate QR code data for the transaction
+            $qrData = json_encode([
                 'transaction_id' => $transaction->id,
-                'booking_id' => $booking->id,
                 'user_id' => $transaction->user_id,
                 'user_name' => $transaction->user->name,
-                'court_name' => $booking->court->name ?? 'N/A',
-                'date' => $booking->date,
-                'start_time' => $booking->start_time,
-                'end_time' => $booking->end_time,
-                'price' => $booking->price,
+                'total_price' => $transaction->total_price,
                 'payment_method' => $transaction->payment_method,
                 'approved_at' => now()->toDateTimeString(),
                 'type' => 'cart_transaction'
             ]);
 
-            // Update booking status to match cart transaction approval status
-            $booking->update([
-                'status' => 'approved',
-                'qr_code' => $bookingQrData
+            // Update the cart transaction status
+            $transaction->update([
+                'approval_status' => 'approved',
+                'approved_by' => $request->user()->id,
+                'approved_at' => now(),
+                'qr_code' => $qrData
             ]);
 
-            // Broadcast real-time status change for this booking
-            broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
-        }
+            // Get booking IDs for bulk update
+            $bookingIds = $transaction->bookings->pluck('id')->toArray();
 
-        // Send email notification to user (with debug logging)
-        $emailDebug = [
-            'attempted' => false,
-            'sent' => false,
-            'recipient' => null,
-            'error' => null,
-        ];
+            // Bulk update all bookings to 'approved' status for atomicity
+            if (!empty($bookingIds)) {
+                Booking::whereIn('id', $bookingIds)->update(['status' => 'approved']);
+            }
 
-        try {
-            // Reload transaction with full relationships for email
-            $transactionWithDetails = CartTransaction::with([
-                'user',
-                'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled')
-                          ->orderBy('booking_date')
-                          ->orderBy('start_time');
-                },
-                'cartItems.court.sport',
-                'cartItems.sport',
-                'cartItems.court'
-            ])->find($transaction->id);
+            // Update individual QR codes (within same transaction)
+            foreach ($transaction->bookings()->whereIn('id', $bookingIds)->get() as $booking) {
+                // Generate unique QR code for each booking
+                $bookingQrData = json_encode([
+                    'transaction_id' => $transaction->id,
+                    'booking_id' => $booking->id,
+                    'user_id' => $transaction->user_id,
+                    'user_name' => $transaction->user->name,
+                    'court_name' => $booking->court->name ?? 'N/A',
+                    'date' => $booking->date,
+                    'start_time' => $booking->start_time,
+                    'end_time' => $booking->end_time,
+                    'price' => $booking->price,
+                    'payment_method' => $transaction->payment_method,
+                    'approved_at' => now()->toDateTimeString(),
+                    'type' => 'cart_transaction'
+                ]);
 
-            if ($transactionWithDetails) {
-                // Determine recipient: Booking For user's email if selected, else creator's email
-                $recipientEmail = $transactionWithDetails->user->email ?? null;
-                $firstCartItem = $transactionWithDetails->cartItems->first();
-                if ($firstCartItem && $firstCartItem->booking_for_user_id && $firstCartItem->bookingForUser && $firstCartItem->bookingForUser->email) {
-                    $recipientEmail = $firstCartItem->bookingForUser->email;
-                }
+                $booking->update(['qr_code' => $bookingQrData]);
+            }
 
-                $emailDebug['recipient'] = $recipientEmail;
-                $emailDebug['attempted'] = true;
-                if ($recipientEmail) {
-                    Mail::to($recipientEmail)
-                        ->send(new BookingApproved($transactionWithDetails));
-                    $emailDebug['sent'] = true;
-                } else {
-                    Log::warning('cart_approval_email.skipped_no_recipient', [
-                        'transaction_id' => $transactionWithDetails->id,
+            // Cancel waitlist within same transaction
+            $this->cancelWaitlistUsers($transaction);
+
+            // Commit all changes atomically
+            DB::commit();
+
+            // AFTER commit: Broadcast events (failures here won't affect data integrity)
+            foreach ($transaction->bookings()->whereIn('id', $bookingIds)->get() as $booking) {
+                try {
+                    broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'approved'))->toOthers();
+                } catch (\Exception $e) {
+                    Log::error('Failed to broadcast booking status change', [
+                        'booking_id' => $booking->id,
+                        'error' => $e->getMessage()
                     ]);
                 }
             }
-        } catch (\Exception $e) {
-            // Email error but don't fail the approval; capture debug info
-            $emailDebug['error'] = $e->getMessage();
-            Log::error('cart_approval_email.error', [
-                'transaction_id' => $transaction->id,
-                'recipient' => $emailDebug['recipient'],
-                'error' => $emailDebug['error'],
+
+            // AFTER commit: Process waitlist notifications
+            foreach ($this->waitlistEntriesToNotify as $notifyData) {
+                if (isset($notifyData['waitlist'])) {
+                    try {
+                        $waitlistEntry = $notifyData['waitlist'];
+                        if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                            Mail::to($waitlistEntry->user->email)
+                                ->send(new \App\Mail\WaitlistCancelledMail($waitlistEntry));
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Failed to send waitlist cancellation email', [
+                            'waitlist_id' => $notifyData['waitlist']->id ?? null,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+
+                if (isset($notifyData['booking'])) {
+                    try {
+                        broadcast(new \App\Events\BookingStatusChanged(
+                            $notifyData['booking'],
+                            $notifyData['old_status'],
+                            'rejected'
+                        ))->toOthers();
+                    } catch (\Exception $e) {
+                        Log::error('Failed to broadcast waitlist booking rejection', [
+                            'booking_id' => $notifyData['booking']->id ?? null,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+            }
+
+            // Clear the notifications array
+            $this->waitlistEntriesToNotify = [];
+
+            // AFTER commit: Send email notification (failures here won't affect data integrity)
+            $emailDebug = [
+                'attempted' => false,
+                'sent' => false,
+                'recipient' => null,
+                'error' => null,
+            ];
+
+            try {
+                // Reload transaction with full relationships for email
+                $transactionWithDetails = CartTransaction::with([
+                    'user',
+                    'cartItems' => function($query) {
+                        $query->where('status', '!=', 'cancelled')
+                              ->orderBy('booking_date')
+                              ->orderBy('start_time');
+                    },
+                    'cartItems.court.sport',
+                    'cartItems.sport',
+                    'cartItems.court'
+                ])->find($transaction->id);
+
+                if ($transactionWithDetails) {
+                    // Determine recipient: Booking For user's email if selected, else creator's email
+                    $recipientEmail = $transactionWithDetails->user->email ?? null;
+                    $firstCartItem = $transactionWithDetails->cartItems->first();
+                    if ($firstCartItem && $firstCartItem->booking_for_user_id && $firstCartItem->bookingForUser && $firstCartItem->bookingForUser->email) {
+                        $recipientEmail = $firstCartItem->bookingForUser->email;
+                    }
+
+                    $emailDebug['recipient'] = $recipientEmail;
+                    $emailDebug['attempted'] = true;
+                    if ($recipientEmail) {
+                        Mail::to($recipientEmail)
+                            ->send(new BookingApproved($transactionWithDetails));
+                        $emailDebug['sent'] = true;
+                    } else {
+                        Log::warning('cart_approval_email.skipped_no_recipient', [
+                            'transaction_id' => $transactionWithDetails->id,
+                        ]);
+                    }
+                }
+            } catch (\Exception $e) {
+                // Email error but don't fail the approval; capture debug info
+                $emailDebug['error'] = $e->getMessage();
+                Log::error('cart_approval_email.error', [
+                    'transaction_id' => $transaction->id,
+                    'recipient' => $emailDebug['recipient'],
+                    'error' => $emailDebug['error'],
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Transaction approved successfully and notification email sent',
+                'transaction' => $transaction->load(['approver', 'bookings']),
+                'email_debug' => $emailDebug,
             ]);
-        }
 
-        // Notify waitlist users - transaction approved, slots are confirmed
-        // Cancel all waitlisted bookings for the same time slots
-        try {
-            $this->cancelWaitlistUsers($transaction);
         } catch (\Exception $e) {
-            // Continue silently - approval should not fail due to waitlist notification issues
-        }
+            DB::rollBack();
+            Log::error('Failed to approve cart transaction', [
+                'transaction_id' => $id,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
-        return response()->json([
-            'message' => 'Transaction approved successfully and notification email sent',
-            'transaction' => $transaction->load(['approver', 'bookings']),
-            'email_debug' => $emailDebug,
-        ]);
+            return response()->json([
+                'message' => 'Failed to approve transaction. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
     }
 
     /**
@@ -304,50 +378,107 @@ class CartTransactionController extends Controller
             'reason' => 'required|string|max:500'
         ]);
 
-        $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])->findOrFail($id);
-
-        if ($transaction->approval_status === 'rejected') {
-            return response()->json(['message' => 'Transaction already rejected'], 400);
-        }
-
-        // Update the cart transaction status
-        $transaction->update([
-            'approval_status' => 'rejected',
-            'approved_by' => $request->user()->id,
-            'approved_at' => now(),
-            'rejection_reason' => $request->reason
-        ]);
-
-        // Update all associated bookings status to 'rejected' to match cart transaction
-        $transaction->bookings()->update([
-            'status' => 'rejected'
-        ]);
-
-        // Broadcast real-time status change for each booking
-        foreach ($transaction->bookings as $booking) {
-            broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'rejected'))->toOthers();
-        }
-
-        // Notify waitlist users - transaction rejected, slots are now available
+        // Wrap entire operation in transaction for atomicity
+        DB::beginTransaction();
         try {
-            $this->notifyWaitlistUsers($transaction, 'rejected');
-        } catch (\Exception $e) {
-            // Continue silently
-        }
+            // Use lockForUpdate to prevent concurrent rejections
+            $transaction = CartTransaction::with(['cartItems.court', 'bookings.court', 'user'])
+                ->lockForUpdate()
+                ->findOrFail($id);
 
-        return response()->json([
-            'message' => 'Transaction rejected',
-            'transaction' => $transaction->load(['approver', 'bookings'])
-        ]);
+            if ($transaction->approval_status === 'rejected') {
+                DB::rollBack();
+                return response()->json(['message' => 'Transaction already rejected'], 400);
+            }
+
+            // Update the cart transaction status
+            $transaction->update([
+                'approval_status' => 'rejected',
+                'approved_by' => $request->user()->id,
+                'approved_at' => now(),
+                'rejection_reason' => $request->reason
+            ]);
+
+            // Bulk update all associated bookings status to 'rejected' for atomicity
+            $transaction->bookings()->update([
+                'status' => 'rejected'
+            ]);
+
+            // Notify waitlist users within same transaction - slots are now available
+            $this->notifyWaitlistUsers($transaction, 'rejected');
+
+            // Commit all changes atomically
+            DB::commit();
+
+            // AFTER commit: Broadcast events (failures here won't affect data integrity)
+            foreach ($transaction->bookings as $booking) {
+                try {
+                    broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'pending', 'rejected'))->toOthers();
+                } catch (\Exception $e) {
+                    Log::error('Failed to broadcast booking status change', [
+                        'booking_id' => $booking->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            // AFTER commit: Send waitlist notification emails
+            $rejectedBookings = $transaction->bookings;
+            foreach ($rejectedBookings as $rejectedBooking) {
+                $waitlistEntries = BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
+                    ->where('status', BookingWaitlist::STATUS_NOTIFIED)
+                    ->with(['user', 'court', 'sport'])
+                    ->get();
+
+                foreach ($waitlistEntries as $waitlistEntry) {
+                    try {
+                        if ($waitlistEntry->user && $waitlistEntry->user->email) {
+                            Mail::to($waitlistEntry->user->email)
+                                ->send(new WaitlistNotificationMail($waitlistEntry, 'rejected'));
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Failed to send waitlist notification email', [
+                            'waitlist_id' => $waitlistEntry->id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+            }
+
+            return response()->json([
+                'message' => 'Transaction rejected',
+                'transaction' => $transaction->load(['approver', 'bookings'])
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to reject cart transaction', [
+                'transaction_id' => $id,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to reject transaction. Please try again.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
     }
 
     /**
      * Cancel waitlist entries when a transaction is approved
      * This notifies waitlisted users that the slot is no longer available
      * Also rejects any auto-created bookings for waitlisted users
+     *
+     * NOTE: This method is designed to be called within an existing transaction.
+     * It does not create its own transaction wrapper.
      */
     private function cancelWaitlistUsers(CartTransaction $transaction)
     {
+        // Store waitlist entries for email sending after commit
+        $waitlistEntriesToNotify = [];
+
         // Get all bookings from this transaction
         $approvedBookings = $transaction->bookings;
 
@@ -361,82 +492,84 @@ class CartTransactionController extends Controller
 
             // Cancel each waitlist entry and reject associated bookings
             foreach ($waitlistEntries as $waitlistEntry) {
-                try {
-                    // Load relationships for email
-                    $waitlistEntry->load(['user', 'court', 'sport']);
+                // Load relationships
+                $waitlistEntry->load(['user', 'court', 'sport']);
 
-                    $rejectedBookingIds = [];
-                    $rejectedTransactionIds = [];
-                    $cancelledCartItemIds = [];
+                $rejectedBookingIds = [];
+                $rejectedTransactionIds = [];
 
-                    // Find cart items directly linked to this waitlist entry via foreign key
-                    $waitlistCartItems = \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
-                        ->whereNotIn('status', ['cancelled', 'rejected'])
-                        ->get();
+                // Find cart items directly linked to this waitlist entry via foreign key
+                $waitlistCartItems = \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                    ->whereNotIn('status', ['cancelled', 'rejected'])
+                    ->get();
 
-                    // Reject each cart item and its transaction
-                    foreach ($waitlistCartItems as $cartItem) {
-                        // Reject the cart item
-                        $cartItem->update([
-                            'status' => 'rejected',
-                            'notes' => 'Rejected: Parent booking was approved, waitlist cancelled'
-                        ]);
-                        $cancelledCartItemIds[] = $cartItem->id;
+                // Reject each cart item and its transaction
+                foreach ($waitlistCartItems as $cartItem) {
+                    // Reject the cart item
+                    $cartItem->update([
+                        'status' => 'rejected',
+                        'notes' => 'Rejected: Parent booking was approved, waitlist cancelled'
+                    ]);
 
-                        // Reject the cart transaction if not already rejected
-                        if ($cartItem->cart_transaction_id) {
-                            $cartTransaction = CartTransaction::find($cartItem->cart_transaction_id);
-                            if ($cartTransaction && $cartTransaction->approval_status !== 'rejected') {
-                                $cartTransaction->update([
-                                    'approval_status' => 'rejected',
-                                    'rejection_reason' => 'Parent booking was approved - waitlist cancelled'
+                    // Reject the cart transaction if not already rejected
+                    if ($cartItem->cart_transaction_id) {
+                        $cartTransaction = CartTransaction::find($cartItem->cart_transaction_id);
+                        if ($cartTransaction && $cartTransaction->approval_status !== 'rejected') {
+                            $cartTransaction->update([
+                                'approval_status' => 'rejected',
+                                'rejection_reason' => 'Parent booking was approved - waitlist cancelled'
+                            ]);
+
+                            if (!in_array($cartTransaction->id, $rejectedTransactionIds)) {
+                                $rejectedTransactionIds[] = $cartTransaction->id;
+                            }
+
+                            // Find and reject bookings linked to this transaction
+                            $transactionBookings = \App\Models\Booking::where('cart_transaction_id', $cartTransaction->id)
+                                ->where('id', '!=', $approvedBooking->id) // Don't touch parent!
+                                ->where('user_id', $waitlistEntry->user_id)
+                                ->whereIn('status', ['pending', 'approved'])
+                                ->get();
+
+                            foreach ($transactionBookings as $booking) {
+                                $oldBookingStatus = $booking->status;
+                                $booking->update([
+                                    'status' => 'rejected',
+                                    'notes' => ($booking->notes ?? '') . "\n\nAuto-rejected: Parent booking was approved."
                                 ]);
+                                $rejectedBookingIds[] = $booking->id;
 
-                                if (!in_array($cartTransaction->id, $rejectedTransactionIds)) {
-                                    $rejectedTransactionIds[] = $cartTransaction->id;
-                                }
-
-                                // Find and reject bookings linked to this transaction
-                                $transactionBookings = \App\Models\Booking::where('cart_transaction_id', $cartTransaction->id)
-                                    ->where('id', '!=', $approvedBooking->id) // Don't touch parent!
-                                    ->where('user_id', $waitlistEntry->user_id)
-                                    ->whereIn('status', ['pending', 'approved'])
-                                    ->get();
-
-                                foreach ($transactionBookings as $booking) {
-                                    $oldBookingStatus = $booking->status;
-                                    $booking->update([
-                                        'status' => 'rejected',
-                                        'notes' => ($booking->notes ?? '') . "\n\nAuto-rejected: Parent booking was approved."
-                                    ]);
-                                    $rejectedBookingIds[] = $booking->id;
-
-                                    // Broadcast status change
-                                    broadcast(new \App\Events\BookingStatusChanged($booking, $oldBookingStatus, 'rejected'))->toOthers();
-                                }
+                                // Store for broadcasting after commit
+                                $waitlistEntriesToNotify[] = [
+                                    'booking' => $booking,
+                                    'old_status' => $oldBookingStatus
+                                ];
                             }
                         }
                     }
-
-                    // Mark waitlist as cancelled
-                    $waitlistEntry->cancel();
-
-                    // Send cancellation email
-                    if ($waitlistEntry->user && $waitlistEntry->user->email) {
-                        Mail::to($waitlistEntry->user->email)
-                            ->send(new \App\Mail\WaitlistCancelledMail($waitlistEntry));
-                    }
-
-                } catch (\Exception $e) {
-                    // Silently continue processing other entries
                 }
+
+                // Mark waitlist as cancelled
+                $waitlistEntry->cancel();
+
+                // Store for email sending after commit
+                $waitlistEntriesToNotify[] = [
+                    'waitlist' => $waitlistEntry,
+                    'rejected_bookings' => $rejectedBookingIds
+                ];
             }
         }
+
+        // Store the entries to notify in a class property for after-commit processing
+        $this->waitlistEntriesToNotify = $waitlistEntriesToNotify;
     }
 
     /**
      * Notify waitlist users when a transaction is rejected
      * This makes the time slots available to waitlisted users and auto-creates bookings
+     *
+     * NOTE: This method is designed to be called within an existing transaction.
+     * It does not create its own transaction wrapper.
      */
     private function notifyWaitlistUsers(CartTransaction $transaction, string $notificationType = 'rejected')
     {
@@ -451,55 +584,52 @@ class CartTransactionController extends Controller
                 ->orderBy('created_at')
                 ->get();
 
-                // Process each waitlist user
-                foreach ($waitlistEntries as $waitlistEntry) {
-                    try {
-                        DB::beginTransaction();
+            // Process each waitlist user
+            foreach ($waitlistEntries as $waitlistEntry) {
+                try {
+                    // Load relationships
+                    $waitlistEntry->load(['user', 'court', 'sport']);
 
-                        // Load relationships
-                        $waitlistEntry->load(['user', 'court', 'sport']);
+                    // Create booking automatically for waitlisted user
+                    $newBooking = Booking::create([
+                        'user_id' => $waitlistEntry->user_id,
+                        'cart_transaction_id' => null, // Will be linked when they checkout
+                        'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
+                        'court_id' => $waitlistEntry->court_id,
+                        'sport_id' => $waitlistEntry->sport_id,
+                        'start_time' => $waitlistEntry->start_time,
+                        'end_time' => $waitlistEntry->end_time,
+                        'total_price' => $waitlistEntry->price,
+                        'number_of_players' => $waitlistEntry->number_of_players,
+                        'status' => 'pending',  // Pending until payment is uploaded
+                        'payment_status' => 'unpaid',
+                        'payment_method' => 'pending',
+                        'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
+                    ]);
 
-                        // Create booking automatically for waitlisted user
-                        $newBooking = Booking::create([
-                            'user_id' => $waitlistEntry->user_id,
-                            'cart_transaction_id' => null, // Will be linked when they checkout
-                            'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
-                            'court_id' => $waitlistEntry->court_id,
-                            'sport_id' => $waitlistEntry->sport_id,
-                            'start_time' => $waitlistEntry->start_time,
-                            'end_time' => $waitlistEntry->end_time,
-                            'total_price' => $waitlistEntry->price,
-                            'number_of_players' => $waitlistEntry->number_of_players,
-                            'status' => 'pending',  // Pending until payment is uploaded
-                            'payment_status' => 'unpaid',
-                            'payment_method' => 'pending',
-                            'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
-                        ]);
+                    // Update cart_items and cart_transactions to set booking_waitlist_id to null
+                    \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
+                        ->update(['booking_waitlist_id' => null]);
 
-                        // Update cart_items and cart_transactions to set booking_waitlist_id to null
-                        \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
-                            ->update(['booking_waitlist_id' => null]);
+                    \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
+                        ->update(['booking_waitlist_id' => null]);
 
-                        \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
-                            ->update(['booking_waitlist_id' => null]);
+                    // Send notification email with business-hours-aware payment deadline
+                    // If rejected after 5pm or before 8am: deadline is 9am next working day
+                    // If rejected during business hours: deadline is 1 hour from now
+                    $waitlistEntry->sendNotification();
 
-                        // Send notification email with business-hours-aware payment deadline
-                        // If rejected after 5pm or before 8am: deadline is 9am next working day
-                        // If rejected during business hours: deadline is 1 hour from now
-                        $waitlistEntry->sendNotification();
-
-                        // Send email
-                        if ($waitlistEntry->user && $waitlistEntry->user->email) {
-                            Mail::to($waitlistEntry->user->email)
-                                ->send(new WaitlistNotificationMail($waitlistEntry, $notificationType));
-                        }
-
-                        DB::commit();
-                    } catch (\Exception $e) {
-                        DB::rollBack();
-                        // Silently continue
-                    }
+                    // Note: Email sending moved outside transaction in calling code
+                } catch (\Exception $e) {
+                    // Log error but don't break the transaction
+                    Log::error('Failed to process waitlist entry', [
+                        'waitlist_id' => $waitlistEntry->id,
+                        'error' => $e->getMessage()
+                    ]);
+                    // Re-throw to trigger rollback of parent transaction
+                    throw $e;
                 }
+            }
         }
     }
 
@@ -562,20 +692,41 @@ class CartTransactionController extends Controller
 
             // Update transaction status to checked-in if needed
             if ($transaction->status !== 'checked_in') {
-                $transaction->update([
-                    'status' => 'checked_in',
-                    'attendance_status' => 'showed_up'
-                ]);
+                // Wrap database updates in transaction for atomicity
+                DB::beginTransaction();
+                try {
+                    $transaction->update([
+                        'status' => 'checked_in',
+                        'attendance_status' => 'showed_up'
+                    ]);
 
-                // Update associated bookings to 'completed' and set attendance status
-                $transaction->bookings()->update([
-                    'status' => 'completed',
-                    'attendance_status' => 'showed_up'
-                ]);
+                    // Bulk update all associated bookings to 'completed' and set attendance status
+                    $transaction->bookings()->update([
+                        'status' => 'completed',
+                        'attendance_status' => 'showed_up'
+                    ]);
 
-                // Broadcast real-time status change for each booking
-                foreach ($transaction->bookings as $booking) {
-                    broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'approved', 'completed'))->toOthers();
+                    // Commit all changes atomically
+                    DB::commit();
+
+                    // AFTER commit: Broadcast real-time status change for each booking
+                    foreach ($transaction->bookings as $booking) {
+                        try {
+                            broadcast(new BookingStatusChanged($booking->fresh(['user', 'court.sport']), 'approved', 'completed'))->toOthers();
+                        } catch (\Exception $e) {
+                            Log::error('Failed to broadcast QR check-in status change', [
+                                'booking_id' => $booking->id,
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    Log::error('Failed to check-in transaction via QR', [
+                        'transaction_id' => $transaction->id,
+                        'error' => $e->getMessage()
+                    ]);
+                    throw $e;
                 }
             }
 
@@ -698,10 +849,10 @@ class CartTransactionController extends Controller
             ], 422);
         }
 
-        try {
-            $uploadedPaths = [];
+        $uploadedPaths = [];
 
-            // Store multiple uploaded files
+        try {
+            // Upload files first (before database transaction)
             foreach ($request->file('proof_of_payment') as $index => $file) {
                 $filename = 'proof_txn_' . $transaction->id . '_' . time() . '_' . $index . '.' . $file->getClientOriginalExtension();
                 $path = $file->storeAs('proofs', $filename, 'public');
@@ -711,33 +862,55 @@ class CartTransactionController extends Controller
             // Store as JSON array
             $proofOfPaymentJson = json_encode($uploadedPaths);
 
-            // Update transaction with proof of payment
-            $transaction->update([
-                'proof_of_payment' => $proofOfPaymentJson,
-                'payment_method' => $request->payment_method,
-                'payment_status' => 'paid',
-                'paid_at' => now()
-            ]);
-
-            // Update all associated bookings
-            $transaction->bookings()->update([
-                'proof_of_payment' => $proofOfPaymentJson,
-                'payment_method' => $request->payment_method,
-                'payment_status' => 'paid',
-                'paid_at' => now()
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Proof of payment uploaded successfully',
-                'data' => [
+            // Wrap database updates in transaction for atomicity
+            DB::beginTransaction();
+            try {
+                // Update transaction with proof of payment
+                $transaction->update([
                     'proof_of_payment' => $proofOfPaymentJson,
-                    'proof_of_payment_files' => $uploadedPaths,
                     'payment_method' => $request->payment_method,
                     'payment_status' => 'paid',
-                    'paid_at' => now()->toDateTimeString()
-                ]
-            ]);
+                    'paid_at' => now()
+                ]);
+
+                // Bulk update all associated bookings
+                $transaction->bookings()->update([
+                    'proof_of_payment' => $proofOfPaymentJson,
+                    'payment_method' => $request->payment_method,
+                    'payment_status' => 'paid',
+                    'paid_at' => now()
+                ]);
+
+                // Commit all changes atomically
+                DB::commit();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Proof of payment uploaded successfully',
+                    'data' => [
+                        'proof_of_payment' => $proofOfPaymentJson,
+                        'proof_of_payment_files' => $uploadedPaths,
+                        'payment_method' => $request->payment_method,
+                        'payment_status' => 'paid',
+                        'paid_at' => now()->toDateTimeString()
+                    ]
+                ]);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+
+                // Clean up uploaded files on database failure
+                foreach ($uploadedPaths as $path) {
+                    \Storage::disk('public')->delete($path);
+                }
+
+                Log::error('Failed to update payment status in database', [
+                    'transaction_id' => $id,
+                    'error' => $e->getMessage()
+                ]);
+
+                throw $e;
+            }
 
         } catch (\Exception $e) {
             return response()->json([
