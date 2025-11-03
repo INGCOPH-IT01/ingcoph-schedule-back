@@ -17,7 +17,7 @@ class PosSaleController extends Controller
      */
     public function index(Request $request)
     {
-        $query = PosSale::with(['user:id,name', 'customer:id,name,email', 'booking', 'saleItems.product']);
+        $query = PosSale::with(['user:id,first_name,last_name', 'customer:id,first_name,last_name,email', 'booking', 'saleItems.product']);
 
         // Filter by status
         if ($request->has('status')) {
@@ -26,7 +26,10 @@ class PosSaleController extends Controller
 
         // Filter by date range
         if ($request->has('date_from') && $request->has('date_to')) {
-            $query->whereBetween('sale_date', [$request->date_from, $request->date_to]);
+            // Parse dates in application timezone
+            $dateFromStart = \Carbon\Carbon::parse($request->date_from, config('app.timezone'))->startOfDay();
+            $dateToEnd = \Carbon\Carbon::parse($request->date_to, config('app.timezone'))->endOfDay();
+            $query->whereBetween('sale_date', [$dateFromStart, $dateToEnd]);
         }
 
         // Filter by user (staff/admin)
@@ -66,9 +69,11 @@ class PosSaleController extends Controller
     public function show($id)
     {
         $sale = PosSale::with([
-            'user:id,name',
-            'customer:id,name,email',
-            'booking.cart_items.court',
+            'user:id,first_name,last_name',
+            'customer:id,first_name,last_name,email',
+            'booking.cartItems.bookingForUser:id,first_name,last_name,email',
+            'booking.cartItems.court',
+            'booking.user:id,first_name,last_name',
             'saleItems.product.category',
             'stockMovements.product'
         ])->findOrFail($id);
@@ -299,15 +304,18 @@ class PosSaleController extends Controller
      */
     public function statistics(Request $request)
     {
-        $dateFrom = $request->get('date_from', now()->startOfMonth());
-        $dateTo = $request->get('date_to', now()->endOfMonth());
+        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateTo = $request->get('date_to', now()->toDateString());
 
-        $query = PosSale::whereBetween('sale_date', [$dateFrom, $dateTo]);
+        // Parse dates in application timezone and ensure dateTo includes the entire day
+        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
+        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
+
+        $query = PosSale::whereBetween('sale_date', [$dateFromStart, $dateToEnd]);
 
         $stats = [
             'total_sales' => $query->clone()->completed()->count(),
             'total_revenue' => $query->clone()->completed()->sum('total_amount'),
-            'total_profit' => 0,
             'today_sales' => PosSale::today()->completed()->count(),
             'today_revenue' => PosSale::today()->completed()->sum('total_amount'),
             'pending_sales' => PosSale::where('status', 'pending')->count(),
@@ -315,13 +323,18 @@ class PosSaleController extends Controller
             'refunded_sales' => $query->clone()->where('status', 'refunded')->count(),
         ];
 
-        // Calculate profit
-        $completedSales = $query->clone()->completed()->with('saleItems')->get();
-        $totalProfit = 0;
-        foreach ($completedSales as $sale) {
-            $totalProfit += $sale->profit;
+        // Only admins can see profit data
+        if (auth()->check() && auth()->user()->role === 'admin') {
+            $stats['total_profit'] = 0;
+
+            // Calculate profit
+            $completedSales = $query->clone()->completed()->with('saleItems')->get();
+            $totalProfit = 0;
+            foreach ($completedSales as $sale) {
+                $totalProfit += $sale->profit;
+            }
+            $stats['total_profit'] = $totalProfit;
         }
-        $stats['total_profit'] = $totalProfit;
 
         return response()->json($stats);
     }
@@ -331,14 +344,23 @@ class PosSaleController extends Controller
      */
     public function salesReport(Request $request)
     {
-        $dateFrom = $request->get('date_from', now()->startOfMonth());
-        $dateTo = $request->get('date_to', now()->endOfMonth());
+        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateTo = $request->get('date_to', now()->toDateString());
 
-        $sales = PosSale::with(['user:id,name', 'customer:id,name', 'saleItems.product'])
-            ->whereBetween('sale_date', [$dateFrom, $dateTo])
+        // Parse dates in application timezone and ensure dateTo includes the entire day
+        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
+        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
+
+        $sales = PosSale::with(['user:id,first_name,last_name', 'customer:id,first_name,last_name', 'saleItems.product'])
+            ->whereBetween('sale_date', [$dateFromStart, $dateToEnd])
             ->completed()
             ->orderBy('sale_date', 'desc')
             ->get();
+
+        // Hide profit data for non-admin users
+        if (!auth()->check() || auth()->user()->role !== 'admin') {
+            $sales->makeHidden('profit');
+        }
 
         return response()->json($sales);
     }
@@ -348,22 +370,32 @@ class PosSaleController extends Controller
      */
     public function productSalesSummary(Request $request)
     {
-        $dateFrom = $request->get('date_from', now()->startOfMonth());
-        $dateTo = $request->get('date_to', now()->endOfMonth());
+        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateTo = $request->get('date_to', now()->toDateString());
 
-        $productSales = DB::table('pos_sale_items')
+        // Parse dates in application timezone and ensure dateTo includes the entire day
+        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
+        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
+
+        $query = DB::table('pos_sale_items')
             ->join('pos_sales', 'pos_sale_items.pos_sale_id', '=', 'pos_sales.id')
             ->join('products', 'pos_sale_items.product_id', '=', 'products.id')
-            ->whereBetween('pos_sales.sale_date', [$dateFrom, $dateTo])
+            ->whereBetween('pos_sales.sale_date', [$dateFromStart, $dateToEnd])
             ->where('pos_sales.status', 'completed')
             ->select(
                 'products.id',
                 'products.name',
                 'products.sku',
                 DB::raw('SUM(pos_sale_items.quantity) as total_quantity'),
-                DB::raw('SUM(pos_sale_items.subtotal) as total_revenue'),
-                DB::raw('SUM((pos_sale_items.unit_price - pos_sale_items.unit_cost) * pos_sale_items.quantity) as total_profit')
-            )
+                DB::raw('SUM(pos_sale_items.subtotal) as total_revenue')
+            );
+
+        // Only admins can see profit data
+        if (auth()->check() && auth()->user()->role === 'admin') {
+            $query->addSelect(DB::raw('SUM((pos_sale_items.unit_price - pos_sale_items.unit_cost) * pos_sale_items.quantity) as total_profit'));
+        }
+
+        $productSales = $query
             ->groupBy('products.id', 'products.name', 'products.sku')
             ->orderBy('total_revenue', 'desc')
             ->get();
@@ -371,4 +403,3 @@ class PosSaleController extends Controller
         return response()->json($productSales);
     }
 }
-
