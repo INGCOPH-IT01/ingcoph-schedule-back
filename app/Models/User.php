@@ -106,6 +106,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Check if user is cashier
+     */
+    public function isCashier(): bool
+    {
+        return $this->role === 'cashier';
+    }
+
+    /**
      * Check if user can scan QR codes (staff or admin)
      */
     public function canScanQr(): bool
@@ -119,5 +127,13 @@ class User extends Authenticatable
     public function isAdminOrStaff(): bool
     {
         return $this->role === 'admin' || $this->role === 'staff';
+    }
+
+    /**
+     * Check if user can access POS (admin, staff, or cashier)
+     */
+    public function canAccessPos(): bool
+    {
+        return $this->role === 'admin' || $this->role === 'staff' || $this->role === 'cashier';
     }
 }
