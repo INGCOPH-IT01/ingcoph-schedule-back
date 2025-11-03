@@ -112,7 +112,7 @@ class ProductController extends Controller
             'unit' => 'nullable|string|max:50',
             'barcode' => 'nullable|string',
             'description' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'track_inventory' => 'boolean',
             'is_active' => 'boolean',
         ]);
@@ -124,7 +124,7 @@ class ProductController extends Controller
         $data = $request->except('image');
 
         // Handle image upload
-        if ($request->hasFile('image')) {
+        if ($request->hasFile('image') && $request->file('image')->isValid()) {
             $imagePath = $request->file('image')->store('products', 'public');
             $data['image'] = $imagePath;
         }
@@ -162,7 +162,7 @@ class ProductController extends Controller
             'unit' => 'nullable|string|max:50',
             'barcode' => 'nullable|string',
             'description' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'track_inventory' => 'boolean',
             'is_active' => 'boolean',
         ]);
@@ -174,7 +174,7 @@ class ProductController extends Controller
         $data = $request->except('image');
 
         // Handle image upload
-        if ($request->hasFile('image')) {
+        if ($request->hasFile('image') && $request->file('image')->isValid()) {
             // Delete old image
             if ($product->image) {
                 Storage::disk('public')->delete($product->image);
@@ -345,4 +345,3 @@ class ProductController extends Controller
         return response()->json(['message' => 'Category deleted successfully']);
     }
 }
-

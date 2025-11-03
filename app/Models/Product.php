@@ -35,7 +35,7 @@ class Product extends Model
         'track_inventory' => 'boolean',
     ];
 
-    protected $appends = ['is_low_stock', 'profit_margin'];
+    protected $appends = ['is_low_stock', 'profit_margin', 'image_url'];
 
     /**
      * Get the category that owns the product.
@@ -78,6 +78,17 @@ class Product extends Model
             return 0;
         }
         return (($this->price - $this->cost) / $this->price) * 100;
+    }
+
+    /**
+     * Get the full URL for the product image.
+     */
+    public function getImageUrlAttribute()
+    {
+        if (!$this->image) {
+            return null;
+        }
+        return url('storage/' . $this->image);
     }
 
     /**
