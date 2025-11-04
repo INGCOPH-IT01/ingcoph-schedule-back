@@ -1511,40 +1511,9 @@ class CartController extends Controller
             }
 
             // Update the cart item
+            // Note: CartItemObserver will automatically sync related booking records
+            // when court_id or other fields change (see app/Observers/CartItemObserver.php)
             $cartItem->update($updateData);
-
-            // Also update any related booking records with the same cart_transaction_id and time slot
-            // This ensures availability checks show the correct status
-            if ($cartItem->cart_transaction_id) {
-                $oldStartDateTime = $oldBookingDate . ' ' . $oldStartTime;
-                $oldEndDateTime = $oldBookingDate . ' ' . $oldEndTime;
-
-                // Handle midnight crossing for old times
-                $oldStartTimeParsed = \Carbon\Carbon::parse($oldStartDateTime);
-                $oldEndTimeParsed = \Carbon\Carbon::parse($oldEndDateTime);
-                if ($oldEndTimeParsed->lte($oldStartTimeParsed)) {
-                    $oldEndDateTime = \Carbon\Carbon::parse($oldBookingDate)->addDay()->format('Y-m-d') . ' ' . $oldEndTime;
-                }
-
-                $bookingUpdateData = [];
-                if ($request->has('court_id')) {
-                    $bookingUpdateData['court_id'] = $courtId;
-                }
-                if ($request->has('booking_date') || $request->has('start_time')) {
-                    $bookingUpdateData['start_time'] = $startDateTime;
-                }
-                if ($request->has('booking_date') || $request->has('end_time')) {
-                    $bookingUpdateData['end_time'] = $endDateTime;
-                }
-
-                if (!empty($bookingUpdateData)) {
-                    Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
-                        ->where('court_id', $oldCourtId)
-                        ->where('start_time', $oldStartDateTime)
-                        ->where('end_time', $oldEndDateTime)
-                        ->update($bookingUpdateData);
-                }
-            }
 
             // Refresh the cart item from database to ensure we have the latest data
             $cartItem->refresh();
