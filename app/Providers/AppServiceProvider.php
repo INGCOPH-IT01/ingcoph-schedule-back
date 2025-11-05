@@ -25,5 +25,6 @@ class AppServiceProvider extends ServiceProvider
 
         // Register model observers for automatic data synchronization
         \App\Models\CartItem::observe(\App\Observers\CartItemObserver::class);
+        \App\Models\WaitlistCartItem::observe(\App\Observers\WaitlistCartItemObserver::class);
     }
 }
