@@ -252,8 +252,10 @@ class CartController extends Controller
                     ->first();
 
                 // FIX #12: Check for conflicting cart items with proper midnight crossing support
+                // IMPORTANT: Exclude items from the current transaction being built in this request
                 $conflictingCartItems = CartItem::where('court_id', $item['court_id'])
                     ->where('status', 'pending')
+                    ->where('cart_transaction_id', '!=', $cartTransaction->id) // Exclude items from current transaction
                     ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
                         // Check cart items on the same date
                         $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
@@ -289,8 +291,7 @@ class CartController extends Controller
                     ->get();
 
                 // Determine if the conflict is with a pending approval booking
-                // Admin/Staff can bypass waitlist for available slots, but regular users must be waitlisted
-                $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
+                // ALL users (including admin/staff) must go through waitlist to ensure fairness
                 $isPendingApprovalBooking = false;
                 $pendingCartTransactionId = null;
                 $pendingBookingId = null;
@@ -299,66 +300,62 @@ class CartController extends Controller
                 $parentStartTime = null;
                 $parentEndTime = null;
 
-                // Only create waitlist for regular users when there's a pending booking
-                // Admin/Staff can book directly on available slots
-                if (!$isAdminOrStaff) {
-                    if ($conflictingBooking &&
-                        $conflictingBooking->status === 'pending') {
-                        // Regular users get waitlisted when there's a pending booking
+                // Check for pending bookings - all users must be waitlisted
+                if ($conflictingBooking &&
+                    $conflictingBooking->status === 'pending') {
+                    // All users get waitlisted when there's a pending booking
+                    $isPendingApprovalBooking = true;
+                    $pendingBookingId = $conflictingBooking->id;
+                    $pendingCartTransactionId = $conflictingBooking->cart_transaction_id;
+                    // Use the parent booking's actual times
+                    $parentStartTime = $conflictingBooking->start_time;
+                    $parentEndTime = $conflictingBooking->end_time;
+                }
+
+                // Check cart items for pending approval bookings
+                // All users get waitlisted for any pending transaction
+                foreach ($conflictingCartItems as $cartItem) {
+                    $cartTrans = $cartItem->cartTransaction;
+                    if ($cartTrans &&
+                        in_array($cartTrans->approval_status, ['pending', 'pending_waitlist'])) {
+                        // All users with pending transaction triggers waitlist
                         $isPendingApprovalBooking = true;
-                        $pendingBookingId = $conflictingBooking->id;
-                        $pendingCartTransactionId = $conflictingBooking->cart_transaction_id;
-                        // Use the parent booking's actual times
-                        $parentStartTime = $conflictingBooking->start_time;
-                        $parentEndTime = $conflictingBooking->end_time;
-                    }
+                        $pendingCartTransactionId = $cartTrans->id;
 
-                    // Check cart items for pending approval bookings
-                    // Regular users get waitlisted for any pending transaction
-                    foreach ($conflictingCartItems as $cartItem) {
-                        $cartTrans = $cartItem->cartTransaction;
-                        if ($cartTrans &&
-                            in_array($cartTrans->approval_status, ['pending', 'pending_waitlist'])) {
-                            // Regular user with pending transaction triggers waitlist
-                            $isPendingApprovalBooking = true;
-                            $pendingCartTransactionId = $cartTrans->id;
-
-                            // Use the cart item's times to construct parent datetime
-                            if (!$parentStartTime) {
-                                $cartItemDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
-                                $parentStartTime = $cartItemDate . ' ' . $cartItem->start_time;
-                                // Handle midnight crossing
-                                $cartStartTime = \Carbon\Carbon::parse($cartItem->start_time);
-                                $cartEndTime = \Carbon\Carbon::parse($cartItem->end_time);
-                                if ($cartEndTime->lte($cartStartTime)) {
-                                    $endDate = \Carbon\Carbon::parse($cartItemDate)->addDay()->format('Y-m-d');
-                                    $parentEndTime = $endDate . ' ' . $cartItem->end_time;
-                                } else {
-                                    $parentEndTime = $cartItemDate . ' ' . $cartItem->end_time;
-                                }
+                        // Use the cart item's times to construct parent datetime
+                        if (!$parentStartTime) {
+                            $cartItemDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+                            $parentStartTime = $cartItemDate . ' ' . $cartItem->start_time;
+                            // Handle midnight crossing
+                            $cartStartTime = \Carbon\Carbon::parse($cartItem->start_time);
+                            $cartEndTime = \Carbon\Carbon::parse($cartItem->end_time);
+                            if ($cartEndTime->lte($cartStartTime)) {
+                                $endDate = \Carbon\Carbon::parse($cartItemDate)->addDay()->format('Y-m-d');
+                                $parentEndTime = $endDate . ' ' . $cartItem->end_time;
+                            } else {
+                                $parentEndTime = $cartItemDate . ' ' . $cartItem->end_time;
                             }
-
-                            // Find the associated booking if it exists
-                            if (!$pendingBookingId) {
-                                $associatedBooking = Booking::where('cart_transaction_id', $cartTrans->id)
-                                    ->where('court_id', $item['court_id'])
-                                    ->where('start_time', $parentStartTime)
-                                    ->where('end_time', $parentEndTime)
-                                    ->first();
-                                if ($associatedBooking) {
-                                    $pendingBookingId = $associatedBooking->id;
-                                    // Use booking's times if found
-                                    $parentStartTime = $associatedBooking->start_time;
-                                    $parentEndTime = $associatedBooking->end_time;
-                                }
-                            }
-                            break;
                         }
+
+                        // Find the associated booking if it exists
+                        if (!$pendingBookingId) {
+                            $associatedBooking = Booking::where('cart_transaction_id', $cartTrans->id)
+                                ->where('court_id', $item['court_id'])
+                                ->where('start_time', $parentStartTime)
+                                ->where('end_time', $parentEndTime)
+                                ->first();
+                            if ($associatedBooking) {
+                                $pendingBookingId = $associatedBooking->id;
+                                // Use booking's times if found
+                                $parentStartTime = $associatedBooking->start_time;
+                                $parentEndTime = $associatedBooking->end_time;
+                            }
+                        }
+                        break;
                     }
                 }
 
-                // If there's a booking pending approval for regular users, add to waitlist but continue processing other items
-                // Admin/Staff can bypass waitlist and book directly on available slots
+                // If there's a booking pending approval, add ALL users to waitlist (no bypassing)
                 if ($isPendingApprovalBooking) {
                     // Use parent booking's times (not the incoming item's times)
                     // This ensures the waitlist shows the correct time slot
@@ -387,7 +384,8 @@ class CartController extends Controller
                         'number_of_players' => $item['number_of_players'] ?? 1,
                         'position' => $nextPosition,
                         'status' => BookingWaitlist::STATUS_PENDING,
-                        'admin_notes' => $item['admin_notes'] ?? null
+                        'admin_notes' => $item['admin_notes'] ?? null,
+                        'notes' => $item['notes'] ?? null
                     ]);
 
                     // Create cart item for the waitlisted slot with waitlist ID link
@@ -407,6 +405,14 @@ class CartController extends Controller
                         'booking_for_user_name' => $item['booking_for_user_name'] ?? null,
                         'admin_notes' => $item['admin_notes'] ?? null
                     ]);
+
+                    // Create waitlist cart records (WaitlistCartItem and WaitlistCartTransaction)
+                    $waitlistCartService = app(\App\Services\WaitlistCartService::class);
+                    $waitlistCartService->createWaitlistCartRecords(
+                        $waitlistEntry,
+                        $cartItem,
+                        $cartTransaction
+                    );
 
                     // Update cart transaction total price
                     $totalPrice += floatval($item['price']);
@@ -449,7 +455,7 @@ class CartController extends Controller
                     ], 409);
                 }
 
-                // If we reach here, booking is allowed (either no conflict or admin bypassing waitlist)
+                // If we reach here, booking is allowed (no conflict detected)
                 $cartItem = CartItem::create([
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,

@@ -160,7 +160,7 @@ class BookingController extends Controller
 
         if ($conflictingBooking) {
             // ALL users (including admins and staff) must go through waitlist queue
-            // This ensures fairness - no one can skip the line
+            // This ensures fairness - no one can skip the line, preventing issues with client bookings
             try {
                 DB::beginTransaction();
 
@@ -179,7 +179,7 @@ class BookingController extends Controller
                 // Use time-based pricing calculation based on parent booking's times
                 $totalPrice = $court->sport->calculatePriceForRange($waitlistStartTime, $waitlistEndTime);
 
-                // Create waitlist entry for ANY user (regular, staff, or admin)
+                // Create waitlist entry for ALL users (regular, staff, and admin)
                 $waitlistEntry = BookingWaitlist::create([
                     'user_id' => $request->user()->id,
                     'booking_for_user_id' => $request->booking_for_user_id ?? null,
@@ -197,6 +197,10 @@ class BookingController extends Controller
                     'notes' => $request->notes,
                     'admin_notes' => $request->admin_notes ?? null
                 ]);
+
+                // Create waitlist cart records (WaitlistCartItem and WaitlistCartTransaction)
+                $waitlistCartService = app(\App\Services\WaitlistCartService::class);
+                $waitlistCartService->createWaitlistCartRecordsFromWaitlist($waitlistEntry);
 
                 DB::commit();
 
@@ -1195,33 +1199,10 @@ class BookingController extends Controller
                 // Load relationships
                 $waitlistEntry->load(['user', 'court', 'sport']);
 
-                // Find the cart transaction linked to this waitlist entry
-                $cartTransaction = \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)->first();
-
-                // Create booking automatically for waitlisted user
-                $newBooking = Booking::create([
-                    'user_id' => $waitlistEntry->user_id,
-                    'cart_transaction_id' => $cartTransaction ? $cartTransaction->id : null,
-                    'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
-                    'court_id' => $waitlistEntry->court_id,
-                    'sport_id' => $waitlistEntry->sport_id,
-                    'start_time' => $waitlistEntry->start_time,
-                    'end_time' => $waitlistEntry->end_time,
-                    'total_price' => $waitlistEntry->price,
-                    'number_of_players' => $waitlistEntry->number_of_players,
-                    'status' => 'pending',  // Pending until payment is uploaded
-                    'payment_status' => 'unpaid',
-                    'payment_method' => 'pending',
-                    'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
-                ]);
-
-                // Update cart_items and cart_transactions to set booking_waitlist_id to null
-                \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
-                    ->update(['booking_waitlist_id' => null]);
-
-                if ($cartTransaction) {
-                    $cartTransaction->update(['booking_waitlist_id' => null]);
-                }
+                // Convert waitlist to booking using the service
+                // This will create CartTransaction, CartItems, and Booking from WaitlistCartTransaction and WaitlistCartItems
+                $waitlistCartService = app(\App\Services\WaitlistCartService::class);
+                $newBooking = $waitlistCartService->convertWaitlistToBooking($waitlistEntry);
 
                 // Send notification email with business-hours-aware payment deadline
                 // If rejected after 5pm or before 8am: deadline is 9am next working day

@@ -244,6 +244,18 @@ class CartTransactionController extends Controller
             // Cancel waitlist within same transaction
             $this->cancelWaitlistUsers($transaction);
 
+            // Reject waitlist cart records
+            $waitlistCartService = app(\App\Services\WaitlistCartService::class);
+            foreach ($transaction->bookings as $approvedBooking) {
+                $waitlistEntries = BookingWaitlist::where('pending_booking_id', $approvedBooking->id)
+                    ->whereIn('status', [BookingWaitlist::STATUS_PENDING, BookingWaitlist::STATUS_NOTIFIED])
+                    ->get();
+
+                foreach ($waitlistEntries as $waitlistEntry) {
+                    $waitlistCartService->rejectWaitlistCartRecords($waitlistEntry);
+                }
+            }
+
             // Commit all changes atomically
             DB::commit();
 
@@ -585,34 +597,15 @@ class CartTransactionController extends Controller
                 ->get();
 
             // Process each waitlist user
+            $waitlistCartService = app(\App\Services\WaitlistCartService::class);
             foreach ($waitlistEntries as $waitlistEntry) {
                 try {
                     // Load relationships
                     $waitlistEntry->load(['user', 'court', 'sport']);
 
-                    // Create booking automatically for waitlisted user
-                    $newBooking = Booking::create([
-                        'user_id' => $waitlistEntry->user_id,
-                        'cart_transaction_id' => null, // Will be linked when they checkout
-                        'booking_waitlist_id' => $waitlistEntry->id, // Save the waitlist ID
-                        'court_id' => $waitlistEntry->court_id,
-                        'sport_id' => $waitlistEntry->sport_id,
-                        'start_time' => $waitlistEntry->start_time,
-                        'end_time' => $waitlistEntry->end_time,
-                        'total_price' => $waitlistEntry->price,
-                        'number_of_players' => $waitlistEntry->number_of_players,
-                        'status' => 'pending',  // Pending until payment is uploaded
-                        'payment_status' => 'unpaid',
-                        'payment_method' => 'pending',
-                        'notes' => 'Auto-created from waitlist position #' . $waitlistEntry->position
-                    ]);
-
-                    // Update cart_items and cart_transactions to set booking_waitlist_id to null
-                    \App\Models\CartItem::where('booking_waitlist_id', $waitlistEntry->id)
-                        ->update(['booking_waitlist_id' => null]);
-
-                    \App\Models\CartTransaction::where('booking_waitlist_id', $waitlistEntry->id)
-                        ->update(['booking_waitlist_id' => null]);
+                    // Convert waitlist to booking using the service
+                    // This will create CartTransaction, CartItems, and Booking from WaitlistCartTransaction and WaitlistCartItems
+                    $newBooking = $waitlistCartService->convertWaitlistToBooking($waitlistEntry);
 
                     // Send notification email with business-hours-aware payment deadline
                     // If rejected after 5pm or before 8am: deadline is 9am next working day

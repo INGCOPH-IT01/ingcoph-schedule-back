@@ -104,6 +104,14 @@ class BookingWaitlist extends Model
     }
 
     /**
+     * Get the waitlist cart transaction created when converted from waitlist
+     */
+    public function convertedWaitlistCartTransaction(): BelongsTo
+    {
+        return $this->belongsTo(WaitlistCartTransaction::class, 'converted_cart_transaction_id');
+    }
+
+    /**
      * Send notification email to user and start expiration timer
      * Uses business hours logic to calculate expiration time:
      * - During business hours (8am-5pm): expires 1 hour from now
