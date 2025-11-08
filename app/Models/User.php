@@ -130,10 +130,10 @@ class User extends Authenticatable
     }
 
     /**
-     * Check if user can access POS (admin, staff, or cashier)
+     * Check if user can access POS (admin, staff, cashier, or user)
      */
     public function canAccessPos(): bool
     {
-        return $this->role === 'admin' || $this->role === 'staff' || $this->role === 'cashier';
+        return $this->role === 'admin' || $this->role === 'staff' || $this->role === 'cashier' || $this->role === 'user';
     }
 }

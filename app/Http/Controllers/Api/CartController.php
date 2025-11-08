@@ -1151,17 +1151,13 @@ class CartController extends Controller
 
                     // Deduct stock if tracking inventory
                     if ($saleItem['product']->track_inventory) {
-                        $saleItem['product']->decrement('stock_quantity', $saleItem['quantity']);
-
-                        // Create stock movement record
-                        \App\Models\StockMovement::create([
-                            'product_id' => $saleItem['product_id'],
-                            'type' => 'sale',
-                            'quantity' => -$saleItem['quantity'],
-                            'reference_type' => 'pos_sale',
-                            'reference_id' => $posSale->id,
-                            'notes' => "Sold with booking transaction #{$cartTransaction->id}"
-                        ]);
+                        // Use Product model's decreaseStock method which properly handles stock movement recording
+                        $saleItem['product']->decreaseStock(
+                            $saleItem['quantity'],
+                            $userId,
+                            "Sold with booking transaction #{$cartTransaction->id}",
+                            $posSale->id
+                        );
                     }
                 }
             }
