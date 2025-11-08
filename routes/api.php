@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\CompanySettingController;
 use App\Http\Controllers\Api\HolidayController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PosSaleController;
+use App\Http\Controllers\InventoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -213,5 +214,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/pos/statistics', [PosSaleController::class, 'statistics']);
         Route::get('/pos/sales-report', [PosSaleController::class, 'salesReport']);
         Route::get('/pos/product-sales-summary', [PosSaleController::class, 'productSalesSummary']);
+
+        // Inventory Management - Receiving Reports
+        Route::get('/inventory/receiving-reports', [InventoryController::class, 'index']);
+        Route::get('/inventory/receiving-reports/{id}', [InventoryController::class, 'show']);
+        Route::post('/inventory/receiving-reports', [InventoryController::class, 'store']);
+        Route::put('/inventory/receiving-reports/{id}', [InventoryController::class, 'update']);
+        Route::post('/inventory/receiving-reports/{id}/submit', [InventoryController::class, 'submit']);
+        Route::post('/inventory/receiving-reports/{id}/confirm', [InventoryController::class, 'confirm']);
+        Route::post('/inventory/receiving-reports/{id}/cancel', [InventoryController::class, 'cancel']);
+        Route::delete('/inventory/receiving-reports/{id}', [InventoryController::class, 'destroy']);
+        Route::get('/inventory/receiving-reports-export', [InventoryController::class, 'export']);
+        Route::get('/inventory/statistics', [InventoryController::class, 'statistics']);
     });
 });
