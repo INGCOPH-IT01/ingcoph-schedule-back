@@ -23,7 +23,7 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport']);
+        $query = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product']);
 
         // For regular users, show bookings where they are either:
         // 1. The user who created it (user_id)
@@ -272,7 +272,7 @@ class BookingController extends Controller
      */
     public function show(string $id)
     {
-        $booking = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])->find($id);
+        $booking = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])->find($id);
 
         if (!$booking) {
             return response()->json([
@@ -1009,7 +1009,7 @@ class BookingController extends Controller
      */
     public function pendingBookings()
     {
-        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])
             ->where('status', 'pending')
             ->orderBy('created_at', 'desc')
             ->get();
@@ -1497,7 +1497,7 @@ class BookingController extends Controller
      */
     public function getApprovedBookings(Request $request)
     {
-        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])
             ->where('status', Booking::STATUS_APPROVED)
             ->orderBy('start_time', 'asc')
             ->get();

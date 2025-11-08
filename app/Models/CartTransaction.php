@@ -48,6 +48,11 @@ class CartTransaction extends Model
         return $this->hasMany(Booking::class);
     }
 
+    public function posSales(): HasMany
+    {
+        return $this->hasMany(PosSale::class, 'booking_id');
+    }
+
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');

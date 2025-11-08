@@ -1125,7 +1125,7 @@ class CartController extends Controller
 
                 // Create POS sale
                 $posSale = \App\Models\PosSale::create([
-                    'cart_transaction_id' => $cartTransaction->id,
+                    'booking_id' => $cartTransaction->id,
                     'user_id' => $userId,
                     'total_amount' => $posAmount,
                     'subtotal' => $posSubtotal,

@@ -41,7 +41,8 @@ class CartTransactionController extends Controller
                 'cartItems.court.images',
                 'cartItems.bookings',
                 'bookings',
-                'approver'
+                'approver',
+                'posSales.saleItems.product'
             ])
             ->where(function($query) use ($userId) {
                 $query->where('user_id', $userId)
@@ -75,6 +76,7 @@ class CartTransactionController extends Controller
                 'cartItems.bookings',
                 'cartItems.bookingForUser',
                 'bookings',
+                'posSales.saleItems.product',
                 'approver',
                 'waitlistEntries' => function($query) {
                     $query->orderBy('position', 'asc');
