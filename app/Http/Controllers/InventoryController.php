@@ -8,8 +8,6 @@ use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
-use Maatwebsite\Excel\Facades\Excel;
-use App\Exports\ReceivingReportsExport;
 
 class InventoryController extends Controller
 {
@@ -278,9 +276,11 @@ class InventoryController extends Controller
 
         $reports = $query->get();
 
-        $fileName = 'receiving-reports-' . now()->format('Y-m-d-His') . '.xlsx';
-
-        return Excel::download(new ReceivingReportsExport($reports), $fileName);
+        // Return JSON data for frontend Excel generation
+        return response()->json([
+            'reports' => $reports,
+            'exported_at' => now()->format('Y-m-d H:i:s'),
+        ]);
     }
 
     /**
