@@ -14,6 +14,8 @@ class CartTransaction extends Model
         'booking_for_user_name',
         'booking_waitlist_id',
         'total_price',
+        'booking_amount',
+        'pos_amount',
         'status',
         'approval_status',
         'approved_by',
@@ -29,6 +31,8 @@ class CartTransaction extends Model
 
     protected $casts = [
         'total_price' => 'decimal:2',
+        'booking_amount' => 'decimal:2',
+        'pos_amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'approved_at' => 'datetime'
     ];

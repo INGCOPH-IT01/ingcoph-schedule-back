@@ -1173,6 +1173,16 @@ class CartController extends Controller
             // Calculate total price
             $finalTotalPrice = $bookingAmount + $posAmount;
 
+            // IMPORTANT: Add POS amount to the first booking's total_price
+            // Since POS products are associated with the transaction (not specific time slots),
+            // we add the entire POS amount to the first booking
+            if ($posAmount > 0 && count($createdBookings) > 0) {
+                $firstBooking = $createdBookings[0];
+                $firstBooking->update([
+                    'total_price' => $firstBooking->total_price + $posAmount
+                ]);
+            }
+
             // IMPORTANT: Update cart transaction status ONLY AFTER bookings are successfully created
             // This ensures data integrity - cart is only marked 'completed' if bookings exist
             $cartTransaction->update([

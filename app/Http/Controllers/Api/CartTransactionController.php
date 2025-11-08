@@ -157,7 +157,9 @@ class CartTransactionController extends Controller
                 'cartItems.sport',
                 'cartItems.court.images',
                 'cartItems.bookings',
+                'cartItems.bookingForUser',
                 'bookings',
+                'posSales.saleItems.product',
                 'approver'
             ])
             ->findOrFail($id);
