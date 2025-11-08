@@ -657,6 +657,192 @@ class CartController extends Controller
     }
 
     /**
+     * Validate cart items availability
+     * Checks if cart items are still available or should be in waitlist
+     */
+    public function validateCartItems(Request $request)
+    {
+        try {
+            DB::beginTransaction();
+
+            $userId = $request->user()->id;
+
+            // Get all pending cart items for this user
+            $cartItems = CartItem::with(['court', 'cartTransaction'])
+                ->where('user_id', $userId)
+                ->where('status', 'pending')
+                ->whereHas('cartTransaction', function($query) {
+                    $query->where('status', 'pending')
+                          ->where('payment_status', 'unpaid')
+                          ->whereIn('approval_status', ['pending', 'approved']);
+                })
+                ->get();
+
+            if ($cartItems->isEmpty()) {
+                DB::commit();
+                return response()->json([
+                    'success' => true,
+                    'has_unavailable_items' => false,
+                    'unavailable_items' => [],
+                    'message' => 'No items to validate'
+                ]);
+            }
+
+            $unavailableItems = [];
+            $removedItemIds = [];
+
+            foreach ($cartItems as $cartItem) {
+                // Prepare datetime strings for conflict checking
+                $bookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+                $startDateTime = $bookingDate . ' ' . $cartItem->start_time;
+
+                // Handle midnight crossing
+                $startTime = \Carbon\Carbon::parse($cartItem->start_time);
+                $endTime = \Carbon\Carbon::parse($cartItem->end_time);
+                $crossesMidnight = $endTime->lte($startTime);
+
+                if ($crossesMidnight) {
+                    $endDate = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d');
+                    $endDateTime = $endDate . ' ' . $cartItem->end_time;
+                } else {
+                    $endDateTime = $bookingDate . ' ' . $cartItem->end_time;
+                }
+
+                // Check for conflicting bookings (including pending, approved, completed, checked_in)
+                $conflictingBooking = Booking::where('court_id', $cartItem->court_id)
+                    ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
+                    ->where(function ($query) use ($startDateTime, $endDateTime, $bookingDate, $crossesMidnight) {
+                        $query->where(function ($q) use ($startDateTime, $endDateTime, $bookingDate) {
+                            $q->whereDate('start_time', $bookingDate)
+                              ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                  $sq->where(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      $innerQ->where('start_time', '>=', $startDateTime)
+                                             ->where('start_time', '<', $endDateTime);
+                                  })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      $innerQ->where('end_time', '>', $startDateTime)
+                                             ->where('end_time', '<=', $endDateTime);
+                                  })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                      $innerQ->where('start_time', '<=', $startDateTime)
+                                             ->where('end_time', '>=', $endDateTime);
+                                  });
+                              });
+                        });
+
+                        if ($crossesMidnight) {
+                            $prevDate = \Carbon\Carbon::parse($bookingDate)->subDay()->format('Y-m-d');
+                            $query->orWhere(function ($q) use ($startDateTime, $endDateTime, $prevDate) {
+                                $q->whereDate('start_time', $prevDate)
+                                  ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                      $sq->where(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('start_time', '>=', $startDateTime)
+                                                 ->where('start_time', '<', $endDateTime);
+                                      })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('end_time', '>', $startDateTime)
+                                                 ->where('end_time', '<=', $endDateTime);
+                                      })->orWhere(function ($innerQ) use ($startDateTime, $endDateTime) {
+                                          $innerQ->where('start_time', '<=', $startDateTime)
+                                                 ->where('end_time', '>=', $endDateTime);
+                                      });
+                                  });
+                            });
+                        }
+                    })
+                    ->exists();
+
+                // Check for conflicting approved/paid cart items from other transactions
+                $conflictingCartItems = CartItem::where('court_id', $cartItem->court_id)
+                    ->where('status', 'pending')
+                    ->where('cart_transaction_id', '!=', $cartItem->cart_transaction_id)
+                    ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
+                        $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
+                            $q->where('booking_date', $bookingDate)
+                              ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                  $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                      [$startDateTime, $endDateTime])
+                                     ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                      [$startDateTime, $endDateTime])
+                                     ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                      [$startDateTime, $endDateTime]);
+                              });
+                        });
+
+                        if ($crossesMidnight) {
+                            $prevDate = \Carbon\Carbon::parse($bookingDate)->subDay()->format('Y-m-d');
+                            $query->orWhere(function ($q) use ($prevDate, $startDateTime, $endDateTime) {
+                                $q->where('booking_date', $prevDate)
+                                  ->where(function ($sq) use ($startDateTime, $endDateTime) {
+                                      $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                          [$startDateTime, $endDateTime])
+                                         ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                          [$startDateTime, $endDateTime])
+                                         ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                          [$startDateTime, $endDateTime]);
+                                  });
+                            });
+                        }
+                    })
+                    ->whereHas('cartTransaction', function($query) {
+                        $query->where('approval_status', 'approved')
+                              ->where('payment_status', 'paid');
+                    })
+                    ->exists();
+
+                // If there's a conflict with approved/completed bookings or paid cart items, mark as unavailable
+                if ($conflictingBooking || $conflictingCartItems) {
+                    $unavailableItems[] = [
+                        'id' => $cartItem->id,
+                        'court_name' => $cartItem->court ? $cartItem->court->name : 'Unknown',
+                        'booking_date' => $bookingDate,
+                        'start_time' => $cartItem->start_time,
+                        'end_time' => $cartItem->end_time,
+                        'reason' => 'Time slot is no longer available'
+                    ];
+
+                    // Automatically remove the unavailable item
+                    $cartItem->update(['status' => 'cancelled']);
+                    $removedItemIds[] = $cartItem->id;
+
+                    // Update transaction total price
+                    if ($cartItem->cartTransaction) {
+                        $newTotal = $cartItem->cartTransaction->cartItems()
+                            ->where('status', 'pending')
+                            ->sum('price');
+
+                        $cartItem->cartTransaction->update([
+                            'total_price' => max(0, $newTotal)
+                        ]);
+
+                        // If no pending items left, cancel the transaction
+                        if ($cartItem->cartTransaction->cartItems()->where('status', 'pending')->count() === 0) {
+                            $cartItem->cartTransaction->update(['status' => 'cancelled']);
+                        }
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'has_unavailable_items' => count($unavailableItems) > 0,
+                'unavailable_items' => $unavailableItems,
+                'removed_count' => count($removedItemIds),
+                'message' => count($unavailableItems) > 0
+                    ? sprintf('%d item(s) are no longer available and have been removed from your cart.', count($unavailableItems))
+                    : 'All cart items are still available'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to validate cart items',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Get expiration info for a cart transaction (supports business hours logic)
      */
     public function getExpirationInfo(Request $request)
@@ -1196,7 +1382,7 @@ class CartController extends Controller
 
             // Check for conflicts with existing bookings
             $conflictingBooking = Booking::where('court_id', $court->id)
-                ->whereIn('status', ['pending', 'approved', 'completed'])
+                ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
                 ->where(function ($query) use ($startDateTime, $endDateTime) {
                     $query->where(function ($q) use ($startDateTime, $endDateTime) {
                         $q->where('start_time', '>=', $startDateTime)
@@ -1333,7 +1519,7 @@ class CartController extends Controller
 
             // Check for conflicts on the new court
             $conflictingBooking = Booking::where('court_id', $courtId)
-                ->whereIn('status', ['pending', 'approved', 'completed'])
+                ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
                 ->where(function ($query) use ($startDateTime, $endDateTime) {
                     $query->where(function ($q) use ($startDateTime, $endDateTime) {
                         // Existing booking starts during new booking
