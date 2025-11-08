@@ -35,7 +35,8 @@ class PosSale extends Model
         'sale_date' => 'datetime',
     ];
 
-    protected $appends = ['profit'];
+    // Don't automatically append profit - it will be conditionally added for admins only
+    // protected $appends = ['profit'];
 
     /**
      * Boot method to generate sale number.

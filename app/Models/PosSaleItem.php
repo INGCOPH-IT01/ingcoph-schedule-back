@@ -27,7 +27,11 @@ class PosSaleItem extends Model
         'subtotal' => 'decimal:2',
     ];
 
-    protected $appends = ['item_profit'];
+    // Don't automatically append item_profit - it will be conditionally added for admins only
+    // protected $appends = ['item_profit'];
+    
+    // Hide unit_cost by default (only admins should see this)
+    protected $hidden = ['unit_cost'];
 
     /**
      * Get the sale.

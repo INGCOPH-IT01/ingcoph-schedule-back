@@ -78,6 +78,18 @@ class PosSaleController extends Controller
             'stockMovements.product'
         ])->findOrFail($id);
 
+        // Only admins can see profit data
+        if (auth()->check() && auth()->user()->role === 'admin') {
+            // Append profit to the sale
+            $sale->append('profit');
+            
+            // Append item_profit and make unit_cost visible for each sale item
+            $sale->saleItems->each(function ($item) {
+                $item->append('item_profit');
+                $item->makeVisible('unit_cost');
+            });
+        }
+
         return response()->json($sale);
     }
 
