@@ -76,6 +76,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/cart', [CartController::class, 'index']);
     Route::get('/cart/count', [CartController::class, 'count']);
     Route::get('/cart/expiration-info', [CartController::class, 'getExpirationInfo']);
+    Route::post('/cart/validate', [CartController::class, 'validateCartItems']);
     Route::post('/cart', [CartController::class, 'store']);
     Route::delete('/cart/{id}', [CartController::class, 'destroy']);
     Route::delete('/cart', [CartController::class, 'clear']);
