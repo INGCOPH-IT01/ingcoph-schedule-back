@@ -819,7 +819,8 @@ class CartTransactionController extends Controller
         $request->validate([
             'proof_of_payment' => 'required|array', // Accept array of files
             'proof_of_payment.*' => 'required|image|max:5120', // 5MB max per file
-            'payment_method' => 'required|string|in:gcash,cash'
+            'payment_method' => 'required|string|in:gcash,cash',
+            'payment_reference_number' => 'nullable|string|max:255'
         ]);
 
         $transaction = CartTransaction::with(['bookings'])->findOrFail($id);
@@ -866,14 +867,16 @@ class CartTransactionController extends Controller
                 $transaction->update([
                     'proof_of_payment' => $proofOfPaymentJson,
                     'payment_method' => $request->payment_method,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => 'paid',
                     'paid_at' => now()
                 ]);
 
-                // Bulk update all associated bookings
+                // Bulk update all associated bookings with payment reference number
                 $transaction->bookings()->update([
                     'proof_of_payment' => $proofOfPaymentJson,
                     'payment_method' => $request->payment_method,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => 'paid',
                     'paid_at' => now()
                 ]);
@@ -888,6 +891,7 @@ class CartTransactionController extends Controller
                         'proof_of_payment' => $proofOfPaymentJson,
                         'proof_of_payment_files' => $uploadedPaths,
                         'payment_method' => $request->payment_method,
+                        'payment_reference_number' => $request->payment_reference_number,
                         'payment_status' => 'paid',
                         'paid_at' => now()->toDateTimeString()
                     ]

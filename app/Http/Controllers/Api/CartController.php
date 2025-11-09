@@ -927,6 +927,7 @@ class CartController extends Controller
         $validationRules = [
             'payment_method' => $isAdminOrStaff ? 'nullable|in:pending,gcash,cash' : 'required|in:pending,gcash',
             'proof_of_payment' => $isAdminOrStaff ? 'nullable' : 'required_if:payment_method,gcash',
+            'payment_reference_number' => 'nullable|string|max:255',
             'selected_items' => 'nullable|array',
             'selected_items.*' => 'integer|exists:cart_items,id',
             'skip_payment' => 'nullable|boolean', // New field for Admin/Staff to explicitly skip payment
@@ -1251,6 +1252,7 @@ class CartController extends Controller
                     'status' => $bookingStatus,
                     'notes' => $firstCartItem->notes,
                     'payment_method' => $paymentMethod,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => $paymentStatus,
                     'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
                     'paid_at' => $paidAt,
@@ -1359,16 +1361,6 @@ class CartController extends Controller
             // Calculate total price
             $finalTotalPrice = $bookingAmount + $posAmount;
 
-            // IMPORTANT: Add POS amount to the first booking's total_price
-            // Since POS products are associated with the transaction (not specific time slots),
-            // we add the entire POS amount to the first booking
-            if ($posAmount > 0 && count($createdBookings) > 0) {
-                $firstBooking = $createdBookings[0];
-                $firstBooking->update([
-                    'total_price' => $firstBooking->total_price + $posAmount
-                ]);
-            }
-
             // IMPORTANT: Update cart transaction status ONLY AFTER bookings are successfully created
             // This ensures data integrity - cart is only marked 'completed' if bookings exist
             $cartTransaction->update([
@@ -1377,6 +1369,7 @@ class CartController extends Controller
                 'pos_amount' => $posAmount,
                 'status' => 'completed',
                 'payment_method' => $paymentMethod,
+                'payment_reference_number' => $request->payment_reference_number,
                 'payment_status' => $paymentStatus,
                 'proof_of_payment' => $proofOfPaymentPath,
                 'paid_at' => $paidAt,

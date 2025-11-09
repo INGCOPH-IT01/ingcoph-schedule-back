@@ -468,7 +468,8 @@ class BookingController extends Controller
         $validator = Validator::make($request->all(), [
             'proof_of_payment' => 'required|array', // Accept array of files
             'proof_of_payment.*' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max per file
-            'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer' // Optional, defaults to gcash
+            'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer', // Optional, defaults to gcash
+            'payment_reference_number' => 'nullable|string|max:255'
         ]);
 
         if ($validator->fails()) {
@@ -512,10 +513,11 @@ class BookingController extends Controller
             // Wrap database updates in transaction for atomicity
             DB::beginTransaction();
             try {
-                // Update booking with proof of payment path, payment method, and mark as paid
+                // Update booking with proof of payment path, payment method, payment reference number, and mark as paid
                 $booking->update([
                     'proof_of_payment' => $proofOfPaymentJson,
                     'payment_method' => $paymentMethod,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => 'paid',
                     'paid_at' => now()
                 ]);
@@ -543,6 +545,7 @@ class BookingController extends Controller
                         'proof_of_payment' => $proofOfPaymentJson,
                         'proof_of_payment_files' => $uploadedPaths,
                         'payment_method' => $paymentMethod,
+                        'payment_reference_number' => $request->payment_reference_number,
                         'payment_status' => 'paid',
                         'paid_at' => $booking->paid_at
                     ]

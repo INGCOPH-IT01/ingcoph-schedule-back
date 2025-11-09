@@ -22,6 +22,7 @@ class CartTransaction extends Model
         'approved_at',
         'rejection_reason',
         'payment_method',
+        'payment_reference_number',
         'payment_status',
         'proof_of_payment',
         'paid_at',
