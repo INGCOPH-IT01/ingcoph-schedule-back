@@ -22,6 +22,7 @@ class PosSale extends Model
         'total_amount',
         'payment_method',
         'payment_reference',
+        'proof_of_payment',
         'status',
         'notes',
         'sale_date',
@@ -147,4 +148,3 @@ class PosSale extends Model
         return $query->whereDate('sale_date', today());
     }
 }
-

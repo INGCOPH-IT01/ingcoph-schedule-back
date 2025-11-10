@@ -82,7 +82,7 @@ class PosSaleController extends Controller
         if (auth()->check() && auth()->user()->role === 'admin') {
             // Append profit to the sale
             $sale->append('profit');
-            
+
             // Append item_profit and make unit_cost visible for each sale item
             $sale->saleItems->each(function ($item) {
                 $item->append('item_profit');
@@ -110,6 +110,8 @@ class PosSaleController extends Controller
             'tax' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string',
             'payment_reference' => 'nullable|string',
+            'proof_of_payment' => 'nullable|array',
+            'proof_of_payment.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'notes' => 'nullable|string',
             'status' => 'nullable|in:pending,completed,cancelled,refunded',
         ]);
@@ -154,6 +156,21 @@ class PosSaleController extends Controller
             $tax = $request->tax ?? 0;
             $totalAmount = $subtotal - $discount + $tax;
 
+            // Process proof of payment files if provided
+            $proofOfPayment = null;
+            if ($request->hasFile('proof_of_payment')) {
+                $files = $request->file('proof_of_payment');
+                $base64Files = [];
+
+                foreach ($files as $file) {
+                    $fileContent = base64_encode(file_get_contents($file->getRealPath()));
+                    $mimeType = $file->getMimeType();
+                    $base64Files[] = "data:{$mimeType};base64,{$fileContent}";
+                }
+
+                $proofOfPayment = json_encode($base64Files);
+            }
+
             // Create POS sale
             $sale = PosSale::create([
                 'booking_id' => $request->booking_id,
@@ -166,6 +183,7 @@ class PosSaleController extends Controller
                 'total_amount' => $totalAmount,
                 'payment_method' => $request->payment_method,
                 'payment_reference' => $request->payment_reference,
+                'proof_of_payment' => $proofOfPayment,
                 'status' => $request->status ?? 'completed',
                 'notes' => $request->notes,
                 'sale_date' => now(),
