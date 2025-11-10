@@ -125,6 +125,29 @@ class PosSale extends Model
     }
 
     /**
+     * Get proof of payment URLs.
+     */
+    public function getProofOfPaymentUrlsAttribute()
+    {
+        if (!$this->proof_of_payment) {
+            return [];
+        }
+
+        try {
+            $paths = json_decode($this->proof_of_payment, true);
+            if (!is_array($paths)) {
+                return [];
+            }
+
+            return array_map(function ($path) {
+                return asset('storage/' . $path);
+            }, $paths);
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
      * Scope a query to only include completed sales.
      */
     public function scopeCompleted($query)

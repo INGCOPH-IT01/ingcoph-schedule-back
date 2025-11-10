@@ -78,6 +78,9 @@ class PosSaleController extends Controller
             'stockMovements.product'
         ])->findOrFail($id);
 
+        // Append proof of payment URLs
+        $sale->append('proof_of_payment_urls');
+
         // Only admins can see profit data
         if (auth()->check() && auth()->user()->role === 'admin') {
             // Append profit to the sale
@@ -160,15 +163,22 @@ class PosSaleController extends Controller
             $proofOfPayment = null;
             if ($request->hasFile('proof_of_payment')) {
                 $files = $request->file('proof_of_payment');
-                $base64Files = [];
+                $filePaths = [];
 
-                foreach ($files as $file) {
-                    $fileContent = base64_encode(file_get_contents($file->getRealPath()));
-                    $mimeType = $file->getMimeType();
-                    $base64Files[] = "data:{$mimeType};base64,{$fileContent}";
+                // Create directory if it doesn't exist
+                $directory = 'pos-proofs';
+                if (!\Storage::disk('public')->exists($directory)) {
+                    \Storage::disk('public')->makeDirectory($directory);
                 }
 
-                $proofOfPayment = json_encode($base64Files);
+                foreach ($files as $file) {
+                    // Generate unique filename
+                    $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+                    $path = $file->storeAs($directory, $filename, 'public');
+                    $filePaths[] = $path;
+                }
+
+                $proofOfPayment = json_encode($filePaths);
             }
 
             // Create POS sale
@@ -222,7 +232,11 @@ class PosSaleController extends Controller
 
             DB::commit();
 
-            return response()->json($sale->load(['saleItems.product', 'user', 'customer']), 201);
+            // Load relationships and append proof of payment URLs
+            $sale->load(['saleItems.product', 'user', 'customer']);
+            $sale->append('proof_of_payment_urls');
+
+            return response()->json($sale, 201);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to create sale: ' . $e->getMessage()], 500);
@@ -386,6 +400,11 @@ class PosSaleController extends Controller
             ->completed()
             ->orderBy('sale_date', 'desc')
             ->get();
+
+        // Append proof of payment URLs for all sales
+        $sales->each(function ($sale) {
+            $sale->append('proof_of_payment_urls');
+        });
 
         // Hide profit data for non-admin users
         if (!auth()->check() || auth()->user()->role !== 'admin') {
