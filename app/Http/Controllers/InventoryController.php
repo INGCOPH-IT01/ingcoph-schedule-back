@@ -16,7 +16,7 @@ class InventoryController extends Controller
      */
     public function index(Request $request)
     {
-        $query = ReceivingReport::with(['user:id,name', 'confirmedBy:id,name', 'items.product'])
+        $query = ReceivingReport::with(['user:id,first_name,last_name', 'confirmedBy:id,first_name,last_name', 'items.product'])
             ->withCount('items');
 
         // Filter by status
@@ -59,8 +59,8 @@ class InventoryController extends Controller
     public function show($id)
     {
         $report = ReceivingReport::with([
-            'user:id,name',
-            'confirmedBy:id,name',
+            'user:id,first_name,last_name',
+            'confirmedBy:id,first_name,last_name',
             'items.product'
         ])->findOrFail($id);
 
@@ -77,7 +77,7 @@ class InventoryController extends Controller
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
-            'items.*.unit_cost' => 'required|numeric|min:0',
+            'items.*.unit_cost' => 'nullable|numeric|min:0',
             'items.*.notes' => 'nullable|string',
         ]);
 
@@ -100,7 +100,7 @@ class InventoryController extends Controller
                 $report->items()->create([
                     'product_id' => $item['product_id'],
                     'quantity' => $item['quantity'],
-                    'unit_cost' => $item['unit_cost'],
+                    'unit_cost' => $item['unit_cost'] ?? null,
                     'notes' => $item['notes'] ?? null,
                 ]);
             }
@@ -131,7 +131,7 @@ class InventoryController extends Controller
             'items' => 'sometimes|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
-            'items.*.unit_cost' => 'required|numeric|min:0',
+            'items.*.unit_cost' => 'nullable|numeric|min:0',
             'items.*.notes' => 'nullable|string',
         ]);
 
@@ -156,7 +156,7 @@ class InventoryController extends Controller
                     $report->items()->create([
                         'product_id' => $item['product_id'],
                         'quantity' => $item['quantity'],
-                        'unit_cost' => $item['unit_cost'],
+                        'unit_cost' => $item['unit_cost'] ?? null,
                         'notes' => $item['notes'] ?? null,
                     ]);
                 }
@@ -200,6 +200,11 @@ class InventoryController extends Controller
      */
     public function confirm($id)
     {
+        // Check if user is admin
+        if (auth()->user()->role !== 'admin') {
+            return response()->json(['message' => 'Only administrators can confirm receiving reports'], 403);
+        }
+
         $report = ReceivingReport::findOrFail($id);
 
         if ($report->status !== 'pending') {
@@ -258,7 +263,7 @@ class InventoryController extends Controller
      */
     public function export(Request $request)
     {
-        $query = ReceivingReport::with(['user:id,name', 'confirmedBy:id,name', 'items.product']);
+        $query = ReceivingReport::with(['user:id,first_name,last_name', 'confirmedBy:id,first_name,last_name', 'items.product']);
 
         // Apply same filters as index
         if ($request->has('status')) {

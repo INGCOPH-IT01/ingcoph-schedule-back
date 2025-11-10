@@ -47,9 +47,11 @@ class ReceivingReportItem extends Model
     {
         parent::boot();
 
-        // Calculate total cost before saving
+        // Calculate total cost before saving (only if unit_cost is provided)
         static::saving(function ($item) {
-            $item->total_cost = $item->quantity * $item->unit_cost;
+            if ($item->unit_cost !== null) {
+                $item->total_cost = $item->quantity * $item->unit_cost;
+            }
         });
     }
 }

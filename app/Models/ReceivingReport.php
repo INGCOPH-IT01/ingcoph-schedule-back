@@ -131,7 +131,7 @@ class ReceivingReport extends Model
                 $product->increaseStock(
                     $item->quantity,
                     $userId,
-                    'receiving',
+                    'in',
                     "Receiving Report: {$this->report_number}",
                     $this->report_number
                 );
