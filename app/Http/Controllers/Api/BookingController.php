@@ -1038,18 +1038,21 @@ class BookingController extends Controller
 
     /**
      * Process waitlist entries when a booking is rejected
-     * Auto-creates bookings for waitlisted users
+     * IMPORTANT: Only processes the FIRST user in queue (Position #1)
+     * Other users (Position #2+) remain pending until Position #1's outcome is resolved
      */
     private function processWaitlistForRejectedBooking(Booking $rejectedBooking)
     {
-        // Find waitlist entries linked to this booking
-        $waitlistEntries = \App\Models\BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
+        // Find ONLY the next waitlist entry (Position #1) linked to this booking
+        // Position #2, #3, etc. will remain pending until Position #1 outcome is determined
+        $waitlistEntry = \App\Models\BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
             ->where('status', \App\Models\BookingWaitlist::STATUS_PENDING)
             ->orderBy('position')
             ->orderBy('created_at')
-            ->get();
+            ->first(); // Only get Position #1
 
-        foreach ($waitlistEntries as $waitlistEntry) {
+        // Process Position #1 waitlist user if exists
+        if ($waitlistEntry) {
             try {
                 DB::beginTransaction();
 
@@ -1072,11 +1075,27 @@ class BookingController extends Controller
                         ->send(new \App\Mail\WaitlistNotificationMail($waitlistEntry, 'available'));
                 }
 
+                Log::info('Notified Position #1 waitlist user for rejected booking', [
+                    'waitlist_id' => $waitlistEntry->id,
+                    'position' => $waitlistEntry->position,
+                    'user_id' => $waitlistEntry->user_id,
+                    'booking_id' => $rejectedBooking->id
+                ]);
+
                 DB::commit();
             } catch (\Exception $e) {
                 DB::rollBack();
-                // Silently continue
+                Log::error('Failed to process Position #1 waitlist entry for rejected booking', [
+                    'waitlist_id' => $waitlistEntry->id,
+                    'position' => $waitlistEntry->position,
+                    'booking_id' => $rejectedBooking->id,
+                    'error' => $e->getMessage()
+                ]);
             }
+        } else {
+            Log::info('No pending waitlist entries found for rejected booking', [
+                'booking_id' => $rejectedBooking->id
+            ]);
         }
     }
 

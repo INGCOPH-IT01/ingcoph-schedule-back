@@ -582,7 +582,8 @@ class CartTransactionController extends Controller
 
     /**
      * Notify waitlist users when a transaction is rejected
-     * This makes the time slots available to waitlisted users and auto-creates bookings
+     * IMPORTANT: Only notifies the FIRST user in queue (Position #1)
+     * Other users (Position #2+) remain pending until Position #1's outcome is resolved
      *
      * NOTE: This method is designed to be called within an existing transaction.
      * It does not create its own transaction wrapper.
@@ -593,16 +594,17 @@ class CartTransactionController extends Controller
         $rejectedBookings = $transaction->bookings;
 
         foreach ($rejectedBookings as $rejectedBooking) {
-            // Find waitlist entries linked to this specific booking
-            $waitlistEntries = BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
+            // Find ONLY the next waitlist entry (Position #1) linked to this specific booking
+            // Position #2, #3, etc. will remain pending until Position #1 outcome is determined
+            $waitlistEntry = BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
                 ->where('status', BookingWaitlist::STATUS_PENDING)
                 ->orderBy('position')
                 ->orderBy('created_at')
-                ->get();
+                ->first(); // Only get Position #1
 
-            // Process each waitlist user
-            $waitlistCartService = app(\App\Services\WaitlistCartService::class);
-            foreach ($waitlistEntries as $waitlistEntry) {
+            // Process Position #1 waitlist user if exists
+            if ($waitlistEntry) {
+                $waitlistCartService = app(\App\Services\WaitlistCartService::class);
                 try {
                     // Load relationships
                     $waitlistEntry->load(['user', 'court', 'sport']);
@@ -616,16 +618,28 @@ class CartTransactionController extends Controller
                     // If rejected during business hours: deadline is 1 hour from now
                     $waitlistEntry->sendNotification();
 
+                    Log::info('Notified Position #1 waitlist user', [
+                        'waitlist_id' => $waitlistEntry->id,
+                        'position' => $waitlistEntry->position,
+                        'user_id' => $waitlistEntry->user_id,
+                        'pending_booking_id' => $rejectedBooking->id
+                    ]);
+
                     // Note: Email sending moved outside transaction in calling code
                 } catch (\Exception $e) {
                     // Log error but don't break the transaction
                     Log::error('Failed to process waitlist entry', [
                         'waitlist_id' => $waitlistEntry->id,
+                        'position' => $waitlistEntry->position,
                         'error' => $e->getMessage()
                     ]);
                     // Re-throw to trigger rollback of parent transaction
                     throw $e;
                 }
+            } else {
+                Log::info('No pending waitlist entries found for booking', [
+                    'booking_id' => $rejectedBooking->id
+                ]);
             }
         }
     }
