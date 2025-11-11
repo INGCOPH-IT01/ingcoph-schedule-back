@@ -40,7 +40,7 @@ class UserController extends Controller
             'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6|confirmed',
-            'user_type' => 'required|in:user,staff,admin',
+            'user_type' => 'required|in:user,staff,admin,cashier',
             'phone' => 'nullable|string|max:20',
         ]);
 
@@ -107,7 +107,7 @@ class UserController extends Controller
             'last_name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|string|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:8|confirmed',
-            'user_type' => 'sometimes|required|in:user,staff,admin',
+            'user_type' => 'sometimes|required|in:user,staff,admin,cashier',
             'phone' => 'nullable|string|max:20',
         ]);
 
@@ -203,6 +203,7 @@ class UserController extends Controller
                 'users' => User::where('role', 'user')->count(),
                 'staff' => User::where('role', 'staff')->count(),
                 'admins' => User::where('role', 'admin')->count(),
+                'cashiers' => User::where('role', 'cashier')->count(),
             ];
 
             return response()->json([

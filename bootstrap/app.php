@@ -24,6 +24,12 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
             'staff' => \App\Http\Middleware\StaffMiddleware::class,
             'admin.or.staff' => \App\Http\Middleware\AdminOrStaffMiddleware::class,
+            'pos.access' => \App\Http\Middleware\PosAccessMiddleware::class,
+        ]);
+
+        // Ensure CORS middleware is applied to API routes
+        $middleware->api(prepend: [
+            \Illuminate\Http\Middleware\HandleCors::class,
         ]);
 
         // Configure API authentication to return JSON instead of redirecting

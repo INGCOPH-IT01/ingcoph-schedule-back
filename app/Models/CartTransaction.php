@@ -14,12 +14,15 @@ class CartTransaction extends Model
         'booking_for_user_name',
         'booking_waitlist_id',
         'total_price',
+        'booking_amount',
+        'pos_amount',
         'status',
         'approval_status',
         'approved_by',
         'approved_at',
         'rejection_reason',
         'payment_method',
+        'payment_reference_number',
         'payment_status',
         'proof_of_payment',
         'paid_at',
@@ -29,6 +32,8 @@ class CartTransaction extends Model
 
     protected $casts = [
         'total_price' => 'decimal:2',
+        'booking_amount' => 'decimal:2',
+        'pos_amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'approved_at' => 'datetime'
     ];
@@ -46,6 +51,11 @@ class CartTransaction extends Model
     public function bookings(): HasMany
     {
         return $this->hasMany(Booking::class);
+    }
+
+    public function posSales(): HasMany
+    {
+        return $this->hasMany(PosSale::class, 'booking_id');
     }
 
     public function approver(): BelongsTo

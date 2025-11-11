@@ -12,6 +12,9 @@ use App\Http\Controllers\Api\CartTransactionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\CompanySettingController;
 use App\Http\Controllers\Api\HolidayController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\PosSaleController;
+use App\Http\Controllers\InventoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -180,5 +183,49 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
         Route::delete('/admin/company-settings/payment-qr-code', [CompanySettingController::class, 'deletePaymentQrCode']);
+    });
+
+    // POS routes (admin, staff, and cashier)
+    Route::middleware('pos.access')->group(function () {
+        // Product Category routes
+        Route::get('/pos/categories', [ProductController::class, 'getCategories']);
+        Route::post('/pos/categories', [ProductController::class, 'storeCategory']);
+        Route::put('/pos/categories/{id}', [ProductController::class, 'updateCategory']);
+        Route::delete('/pos/categories/{id}', [ProductController::class, 'destroyCategory']);
+
+        // Product routes
+        Route::get('/pos/products', [ProductController::class, 'index']);
+        Route::get('/pos/products/{id}', [ProductController::class, 'show']);
+        Route::post('/pos/products', [ProductController::class, 'store']);
+        Route::put('/pos/products/{id}', [ProductController::class, 'update']);
+        Route::delete('/pos/products/{id}', [ProductController::class, 'destroy']);
+        Route::post('/pos/products/{id}/adjust-stock', [ProductController::class, 'adjustStock']);
+        Route::post('/pos/products/{id}/add-stock', [ProductController::class, 'addStock']);
+        Route::get('/pos/products/{id}/stock-movements', [ProductController::class, 'stockMovements']);
+        Route::get('/pos/products/low-stock/list', [ProductController::class, 'lowStock']);
+
+        // POS Sale routes
+        Route::get('/pos/sales', [PosSaleController::class, 'index']);
+        Route::get('/pos/sales/{id}', [PosSaleController::class, 'show']);
+        Route::post('/pos/sales', [PosSaleController::class, 'store']);
+        Route::patch('/pos/sales/{id}/status', [PosSaleController::class, 'updateStatus']);
+        Route::delete('/pos/sales/{id}', [PosSaleController::class, 'destroy']);
+
+        // POS Statistics and Reports
+        Route::get('/pos/statistics', [PosSaleController::class, 'statistics']);
+        Route::get('/pos/sales-report', [PosSaleController::class, 'salesReport']);
+        Route::get('/pos/product-sales-summary', [PosSaleController::class, 'productSalesSummary']);
+
+        // Inventory Management - Receiving Reports
+        Route::get('/inventory/receiving-reports', [InventoryController::class, 'index']);
+        Route::get('/inventory/receiving-reports/{id}', [InventoryController::class, 'show']);
+        Route::post('/inventory/receiving-reports', [InventoryController::class, 'store']);
+        Route::put('/inventory/receiving-reports/{id}', [InventoryController::class, 'update']);
+        Route::post('/inventory/receiving-reports/{id}/submit', [InventoryController::class, 'submit']);
+        Route::post('/inventory/receiving-reports/{id}/confirm', [InventoryController::class, 'confirm']);
+        Route::post('/inventory/receiving-reports/{id}/cancel', [InventoryController::class, 'cancel']);
+        Route::delete('/inventory/receiving-reports/{id}', [InventoryController::class, 'destroy']);
+        Route::get('/inventory/receiving-reports-export', [InventoryController::class, 'export']);
+        Route::get('/inventory/statistics', [InventoryController::class, 'statistics']);
     });
 });

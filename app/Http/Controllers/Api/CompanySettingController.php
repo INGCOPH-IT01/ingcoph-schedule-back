@@ -77,6 +77,13 @@ class CompanySettingController extends Controller
                 $settings['user_booking_enabled'] = $settings['user_booking_enabled'] === '1';
             }
 
+            // Waitlist feature setting
+            if (!isset($settings['waitlist_enabled'])) {
+                $settings['waitlist_enabled'] = true;
+            } else {
+                $settings['waitlist_enabled'] = $settings['waitlist_enabled'] === '1';
+            }
+
             // Payment settings
             if (!isset($settings['payment_gcash_number'])) {
                 $settings['payment_gcash_number'] = '0917-123-4567';
@@ -195,6 +202,7 @@ class CompanySettingController extends Controller
             'dashboard_show_recent_bookings' => 'nullable|boolean',
             // Booking rules
             'user_booking_enabled' => 'nullable|boolean',
+            'waitlist_enabled' => 'nullable|boolean',
             // Payment settings
             'payment_gcash_number' => 'nullable|string|max:50',
             'payment_gcash_name' => 'nullable|string|max:255',
@@ -292,6 +300,9 @@ class CompanySettingController extends Controller
             // Save booking rules
             if ($request->has('user_booking_enabled')) {
                 CompanySetting::set('user_booking_enabled', $request->user_booking_enabled ? '1' : '0');
+            }
+            if ($request->has('waitlist_enabled')) {
+                CompanySetting::set('waitlist_enabled', $request->waitlist_enabled ? '1' : '0');
             }
 
             // Save background color settings
@@ -392,6 +403,7 @@ class CompanySettingController extends Controller
                 'dashboard_show_stats' => CompanySetting::get('dashboard_show_stats', '1') === '1',
                 'dashboard_show_recent_bookings' => CompanySetting::get('dashboard_show_recent_bookings', '1') === '1',
                 'user_booking_enabled' => CompanySetting::get('user_booking_enabled', '1') === '1',
+                'waitlist_enabled' => CompanySetting::get('waitlist_enabled', '1') === '1',
                 'bg_secondary_color' => CompanySetting::get('bg_secondary_color', '#FFEBEE'),
                 'bg_accent_color' => CompanySetting::get('bg_accent_color', '#FFCDD2'),
                 'bg_overlay_color' => CompanySetting::get('bg_overlay_color', 'rgba(183, 28, 28, 0.08)'),

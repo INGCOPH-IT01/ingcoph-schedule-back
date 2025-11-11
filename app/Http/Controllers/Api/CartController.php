@@ -927,9 +927,17 @@ class CartController extends Controller
         $validationRules = [
             'payment_method' => $isAdminOrStaff ? 'nullable|in:pending,gcash,cash' : 'required|in:pending,gcash',
             'proof_of_payment' => $isAdminOrStaff ? 'nullable' : 'required_if:payment_method,gcash',
+            'payment_reference_number' => 'nullable|string|max:255',
             'selected_items' => 'nullable|array',
             'selected_items.*' => 'integer|exists:cart_items,id',
-            'skip_payment' => 'nullable|boolean' // New field for Admin/Staff to explicitly skip payment
+            'skip_payment' => 'nullable|boolean', // New field for Admin/Staff to explicitly skip payment
+            'pos_items' => 'nullable|array',
+            'pos_items.*.product_id' => 'required_with:pos_items|integer|exists:products,id',
+            'pos_items.*.quantity' => 'required_with:pos_items|integer|min:1',
+            'pos_items.*.unit_price' => 'required_with:pos_items|numeric|min:0',
+            'pos_items.*.discount' => 'nullable|numeric|min:0',
+            'pos_amount' => 'nullable|numeric|min:0',
+            'booking_amount' => 'nullable|numeric|min:0'
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
@@ -1244,6 +1252,7 @@ class CartController extends Controller
                     'status' => $bookingStatus,
                     'notes' => $firstCartItem->notes,
                     'payment_method' => $paymentMethod,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => $paymentStatus,
                     'proof_of_payment' => $proofOfPaymentPath, // Use the saved file path
                     'paid_at' => $paidAt,
@@ -1266,12 +1275,101 @@ class CartController extends Controller
                 broadcast(new BookingCreated($booking))->toOthers();
             }
 
+            // Process POS items if provided
+            $posAmount = 0;
+            $bookingAmount = $totalPrice;
+            if ($request->has('pos_items') && count($request->pos_items) > 0) {
+                // Create POS sale linked to this transaction
+                $posSubtotal = 0;
+                $posSaleItems = [];
+
+                foreach ($request->pos_items as $item) {
+                    $product = \App\Models\Product::findOrFail($item['product_id']);
+
+                    // Check stock availability
+                    if ($product->track_inventory && $product->stock_quantity < $item['quantity']) {
+                        DB::rollBack();
+                        return response()->json([
+                            'message' => "Insufficient stock for product: {$product->name}. Available: {$product->stock_quantity}"
+                        ], 422);
+                    }
+
+                    $itemDiscount = $item['discount'] ?? 0;
+                    $itemSubtotal = ($item['unit_price'] * $item['quantity']) - $itemDiscount;
+                    $posSubtotal += $itemSubtotal;
+
+                    $posSaleItems[] = [
+                        'product_id' => $product->id,
+                        'product' => $product,
+                        'quantity' => $item['quantity'],
+                        'unit_price' => $item['unit_price'],
+                        'unit_cost' => $product->cost,
+                        'discount' => $itemDiscount,
+                        'subtotal' => $itemSubtotal,
+                    ];
+                }
+
+                $posAmount = $request->pos_amount ?? $posSubtotal;
+
+                // Create POS sale
+                $posSale = \App\Models\PosSale::create([
+                    'booking_id' => $cartTransaction->id,
+                    'user_id' => $userId,
+                    'total_amount' => $posAmount,
+                    'subtotal' => $posSubtotal,
+                    'discount' => 0,
+                    'tax' => 0,
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => $paymentStatus,
+                    'status' => 'completed',
+                    'notes' => 'POS items added to booking'
+                ]);
+
+                // Create POS sale items
+                foreach ($posSaleItems as $saleItem) {
+                    \App\Models\PosSaleItem::create([
+                        'pos_sale_id' => $posSale->id,
+                        'product_id' => $saleItem['product_id'],
+                        'quantity' => $saleItem['quantity'],
+                        'unit_price' => $saleItem['unit_price'],
+                        'unit_cost' => $saleItem['unit_cost'],
+                        'discount' => $saleItem['discount'],
+                        'subtotal' => $saleItem['subtotal'],
+                    ]);
+
+                    // Deduct stock if tracking inventory
+                    if ($saleItem['product']->track_inventory) {
+                        // Use Product model's decreaseStock method which properly handles stock movement recording
+                        $saleItem['product']->decreaseStock(
+                            $saleItem['quantity'],
+                            $userId,
+                            "Sold with booking transaction #{$cartTransaction->id}",
+                            $posSale->id
+                        );
+                    }
+                }
+            }
+
+            // Override amounts if provided
+            if ($request->has('booking_amount')) {
+                $bookingAmount = $request->booking_amount;
+            }
+            if ($request->has('pos_amount')) {
+                $posAmount = $request->pos_amount;
+            }
+
+            // Calculate total price
+            $finalTotalPrice = $bookingAmount + $posAmount;
+
             // IMPORTANT: Update cart transaction status ONLY AFTER bookings are successfully created
             // This ensures data integrity - cart is only marked 'completed' if bookings exist
             $cartTransaction->update([
-                'total_price' => $totalPrice,
+                'total_price' => $finalTotalPrice,
+                'booking_amount' => $bookingAmount,
+                'pos_amount' => $posAmount,
                 'status' => 'completed',
                 'payment_method' => $paymentMethod,
+                'payment_reference_number' => $request->payment_reference_number,
                 'payment_status' => $paymentStatus,
                 'proof_of_payment' => $proofOfPaymentPath,
                 'paid_at' => $paidAt,

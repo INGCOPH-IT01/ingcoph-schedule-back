@@ -23,7 +23,7 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport']);
+        $query = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product']);
 
         // For regular users, show bookings where they are either:
         // 1. The user who created it (user_id)
@@ -272,7 +272,7 @@ class BookingController extends Controller
      */
     public function show(string $id)
     {
-        $booking = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])->find($id);
+        $booking = Booking::with(['user', 'bookingForUser', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])->find($id);
 
         if (!$booking) {
             return response()->json([
@@ -468,7 +468,8 @@ class BookingController extends Controller
         $validator = Validator::make($request->all(), [
             'proof_of_payment' => 'required|array', // Accept array of files
             'proof_of_payment.*' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max per file
-            'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer' // Optional, defaults to gcash
+            'payment_method' => 'nullable|string|in:cash,gcash,bank_transfer', // Optional, defaults to gcash
+            'payment_reference_number' => 'nullable|string|max:255'
         ]);
 
         if ($validator->fails()) {
@@ -512,10 +513,11 @@ class BookingController extends Controller
             // Wrap database updates in transaction for atomicity
             DB::beginTransaction();
             try {
-                // Update booking with proof of payment path, payment method, and mark as paid
+                // Update booking with proof of payment path, payment method, payment reference number, and mark as paid
                 $booking->update([
                     'proof_of_payment' => $proofOfPaymentJson,
                     'payment_method' => $paymentMethod,
+                    'payment_reference_number' => $request->payment_reference_number,
                     'payment_status' => 'paid',
                     'paid_at' => now()
                 ]);
@@ -543,6 +545,7 @@ class BookingController extends Controller
                         'proof_of_payment' => $proofOfPaymentJson,
                         'proof_of_payment_files' => $uploadedPaths,
                         'payment_method' => $paymentMethod,
+                        'payment_reference_number' => $request->payment_reference_number,
                         'payment_status' => 'paid',
                         'paid_at' => $booking->paid_at
                     ]
@@ -863,7 +866,7 @@ class BookingController extends Controller
      */
     public function pendingBookings()
     {
-        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])
             ->where('status', 'pending')
             ->orderBy('created_at', 'desc')
             ->get();
@@ -1035,18 +1038,21 @@ class BookingController extends Controller
 
     /**
      * Process waitlist entries when a booking is rejected
-     * Auto-creates bookings for waitlisted users
+     * IMPORTANT: Only processes the FIRST user in queue (Position #1)
+     * Other users (Position #2+) remain pending until Position #1's outcome is resolved
      */
     private function processWaitlistForRejectedBooking(Booking $rejectedBooking)
     {
-        // Find waitlist entries linked to this booking
-        $waitlistEntries = \App\Models\BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
+        // Find ONLY the next waitlist entry (Position #1) linked to this booking
+        // Position #2, #3, etc. will remain pending until Position #1 outcome is determined
+        $waitlistEntry = \App\Models\BookingWaitlist::where('pending_booking_id', $rejectedBooking->id)
             ->where('status', \App\Models\BookingWaitlist::STATUS_PENDING)
             ->orderBy('position')
             ->orderBy('created_at')
-            ->get();
+            ->first(); // Only get Position #1
 
-        foreach ($waitlistEntries as $waitlistEntry) {
+        // Process Position #1 waitlist user if exists
+        if ($waitlistEntry) {
             try {
                 DB::beginTransaction();
 
@@ -1069,11 +1075,27 @@ class BookingController extends Controller
                         ->send(new \App\Mail\WaitlistNotificationMail($waitlistEntry, 'available'));
                 }
 
+                Log::info('Notified Position #1 waitlist user for rejected booking', [
+                    'waitlist_id' => $waitlistEntry->id,
+                    'position' => $waitlistEntry->position,
+                    'user_id' => $waitlistEntry->user_id,
+                    'booking_id' => $rejectedBooking->id
+                ]);
+
                 DB::commit();
             } catch (\Exception $e) {
                 DB::rollBack();
-                // Silently continue
+                Log::error('Failed to process Position #1 waitlist entry for rejected booking', [
+                    'waitlist_id' => $waitlistEntry->id,
+                    'position' => $waitlistEntry->position,
+                    'booking_id' => $rejectedBooking->id,
+                    'error' => $e->getMessage()
+                ]);
             }
+        } else {
+            Log::info('No pending waitlist entries found for rejected booking', [
+                'booking_id' => $rejectedBooking->id
+            ]);
         }
     }
 
@@ -1351,7 +1373,7 @@ class BookingController extends Controller
      */
     public function getApprovedBookings(Request $request)
     {
-        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport'])
+        $bookings = Booking::with(['user', 'court', 'sport', 'court.images', 'cartTransaction.cartItems.court', 'cartTransaction.cartItems.sport', 'cartTransaction.posSales.saleItems.product'])
             ->where('status', Booking::STATUS_APPROVED)
             ->orderBy('start_time', 'asc')
             ->get();
