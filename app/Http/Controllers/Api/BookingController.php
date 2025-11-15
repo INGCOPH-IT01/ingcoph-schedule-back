@@ -9,6 +9,7 @@ use App\Models\Court;
 use App\Mail\BookingApprovalMail;
 use App\Events\BookingCreated;
 use App\Events\BookingStatusChanged;
+use App\Helpers\WaitlistHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -159,6 +160,13 @@ class BookingController extends Controller
             ->first();
 
         if ($conflictingBooking) {
+            // Check if waitlist is enabled before proceeding
+            if (!WaitlistHelper::isWaitlistEnabled()) {
+                $response = WaitlistHelper::getDisabledResponse(true);
+                $response['conflicting_booking'] = $conflictingBooking;
+                return response()->json($response, 409);
+            }
+
             // ALL users (including admins and staff) must go through waitlist queue
             // This ensures fairness - no one can skip the line, preventing issues with client bookings
             try {
