@@ -10,6 +10,7 @@ use App\Models\Booking;
 use App\Models\BookingWaitlist;
 use App\Events\BookingCreated;
 use App\Helpers\BusinessHoursHelper;
+use App\Helpers\WaitlistHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -357,6 +358,14 @@ class CartController extends Controller
 
                 // If there's a booking pending approval, add ALL users to waitlist (no bypassing)
                 if ($isPendingApprovalBooking) {
+                    // Check if waitlist is enabled before creating waitlist entry
+                    if (!WaitlistHelper::isWaitlistEnabled()) {
+                        return response()->json(
+                            WaitlistHelper::getDisabledResponse(true),
+                            409
+                        );
+                    }
+
                     // Use parent booking's times (not the incoming item's times)
                     // This ensures the waitlist shows the correct time slot
                     $waitlistStartTime = $parentStartTime ?? $startDateTime;
@@ -392,7 +401,7 @@ class CartController extends Controller
                     $cartItem = CartItem::create([
                         'user_id' => $userId,
                         'cart_transaction_id' => $cartTransaction->id,
-                        'booking_waitlist_id' => $waitlistEntry->id, // Link to waitlist!
+                        'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry), // Link to waitlist!
                         'court_id' => $item['court_id'],
                         'sport_id' => $item['sport_id'],
                         'booking_date' => $bookingDate,

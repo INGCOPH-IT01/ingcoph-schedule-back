@@ -8,11 +8,13 @@ use App\Models\CartTransaction;
 use App\Models\WaitlistCartItem;
 use App\Models\WaitlistCartTransaction;
 use App\Models\Booking;
+use App\Helpers\WaitlistHelper;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class WaitlistCartService
 {
+
     /**
      * Create waitlist cart records when a BookingWaitlist entry is created (from cart checkout)
      *
@@ -30,7 +32,7 @@ class WaitlistCartService
         $waitlistCartTransaction = WaitlistCartTransaction::firstOrCreate(
             [
                 'user_id' => $originalCartTransaction->user_id,
-                'booking_waitlist_id' => $waitlistEntry->id,
+                'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry),
             ],
             [
                 'booking_for_user_id' => $originalCartTransaction->booking_for_user_id,
@@ -49,7 +51,7 @@ class WaitlistCartService
             'booking_for_user_id' => $originalCartItem->booking_for_user_id,
             'booking_for_user_name' => $originalCartItem->booking_for_user_name,
             'waitlist_cart_transaction_id' => $waitlistCartTransaction->id,
-            'booking_waitlist_id' => $waitlistEntry->id,
+            'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry),
             'court_id' => $originalCartItem->court_id,
             'sport_id' => $originalCartItem->sport_id,
             'booking_date' => $originalCartItem->booking_date,
@@ -91,7 +93,7 @@ class WaitlistCartService
             'user_id' => $waitlistEntry->user_id,
             'booking_for_user_id' => $waitlistEntry->booking_for_user_id,
             'booking_for_user_name' => $waitlistEntry->booking_for_user_name,
-            'booking_waitlist_id' => $waitlistEntry->id,
+            'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry),
             'total_price' => $waitlistEntry->price,
             'status' => 'pending',
             'approval_status' => 'pending',
@@ -111,7 +113,7 @@ class WaitlistCartService
             'booking_for_user_id' => $waitlistEntry->booking_for_user_id,
             'booking_for_user_name' => $waitlistEntry->booking_for_user_name,
             'waitlist_cart_transaction_id' => $waitlistCartTransaction->id,
-            'booking_waitlist_id' => $waitlistEntry->id,
+            'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry),
             'court_id' => $waitlistEntry->court_id,
             'sport_id' => $waitlistEntry->sport_id,
             'booking_date' => $bookingDate,
@@ -200,7 +202,7 @@ class WaitlistCartService
             $newBooking = Booking::create([
                 'user_id' => $waitlistEntry->user_id,
                 'cart_transaction_id' => $newCartTransaction->id,
-                'booking_waitlist_id' => $waitlistEntry->id,
+                'booking_waitlist_id' => WaitlistHelper::getBookingWaitlistId($waitlistEntry),
                 'court_id' => $waitlistEntry->court_id,
                 'sport_id' => $waitlistEntry->sport_id,
                 'start_time' => $waitlistEntry->start_time,
