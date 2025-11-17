@@ -254,25 +254,27 @@ class CartController extends Controller
 
                 // FIX #12: Check for conflicting cart items with proper midnight crossing support
                 // IMPORTANT: Exclude items from the current transaction being built in this request
-                // Also exclude rejected cart items for better performance
+                // Also exclude rejected/completed cart items for better performance
                 $conflictingCartItems = CartItem::where('court_id', $item['court_id'])
                     ->where('status', 'pending')
                     ->where('cart_transaction_id', '!=', $cartTransaction->id) // Exclude items from current transaction
                     ->whereHas('cartTransaction', function($query) {
-                        // Exclude rejected transactions (only check pending/approved)
-                        $query->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved']);
+                        // Only check truly active transactions (pending status)
+                        // Exclude completed, rejected, or cancelled transactions
+                        $query->where('status', 'pending')
+                              ->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved']);
                     })
                     ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
                         // Check cart items on the same date
                         $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
                             $q->where('booking_date', $bookingDate)
                               ->where(function ($sq) use ($startDateTime, $endDateTime) {
-                                  // Use full datetime comparison for accuracy
-                                  $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                  // Use full datetime comparison for accuracy (DATE() extracts date from datetime column)
+                                  $sq->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
                                       [$startDateTime, $endDateTime])
-                                     ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                     ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
                                       [$startDateTime, $endDateTime])
-                                     ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                     ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
                                       [$startDateTime, $endDateTime]);
                               });
                         });
@@ -283,11 +285,11 @@ class CartController extends Controller
                             $query->orWhere(function ($q) use ($prevDate, $startDateTime, $endDateTime) {
                                 $q->where('booking_date', $prevDate)
                                   ->where(function ($sq) use ($startDateTime, $endDateTime) {
-                                      $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                      $sq->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
                                           [$startDateTime, $endDateTime])
-                                         ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                         ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
                                           [$startDateTime, $endDateTime])
-                                         ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                         ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
                                           [$startDateTime, $endDateTime]);
                                   });
                             });
@@ -296,8 +298,18 @@ class CartController extends Controller
                     ->with('cartTransaction.user')
                     ->get();
 
-                // Determine if the conflict is with a pending approval booking
-                // ALL users (including admin/staff) must go through waitlist to ensure fairness
+                // Check if there are conflicting cart items that block this slot
+                // Cart items should block slots but NOT trigger waitlist - just return "unavailable"
+                if (!$conflictingCartItems->isEmpty()) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'One or more time slots are no longer available. Please refresh and try again.',
+                        'conflict' => true
+                    ], 409);
+                }
+
+                // Determine if the conflict is with a pending approval BOOKING (not cart item)
+                // ONLY actual Booking records with status='pending' should trigger waitlist
                 $isPendingApprovalBooking = false;
                 $pendingCartTransactionId = null;
                 $pendingBookingId = null;
@@ -309,56 +321,13 @@ class CartController extends Controller
                 // Check for pending bookings - all users must be waitlisted
                 if ($conflictingBooking &&
                     $conflictingBooking->status === 'pending') {
-                    // All users get waitlisted when there's a pending booking
+                    // All users get waitlisted when there's a pending BOOKING (not cart item)
                     $isPendingApprovalBooking = true;
                     $pendingBookingId = $conflictingBooking->id;
                     $pendingCartTransactionId = $conflictingBooking->cart_transaction_id;
                     // Use the parent booking's actual times
                     $parentStartTime = $conflictingBooking->start_time;
                     $parentEndTime = $conflictingBooking->end_time;
-                }
-
-                // Check cart items for pending approval bookings
-                // All users get waitlisted for any pending transaction
-                foreach ($conflictingCartItems as $cartItem) {
-                    $cartTrans = $cartItem->cartTransaction;
-                    if ($cartTrans &&
-                        in_array($cartTrans->approval_status, ['pending', 'pending_waitlist'])) {
-                        // All users with pending transaction triggers waitlist
-                        $isPendingApprovalBooking = true;
-                        $pendingCartTransactionId = $cartTrans->id;
-
-                        // Use the cart item's times to construct parent datetime
-                        if (!$parentStartTime) {
-                            $cartItemDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
-                            $parentStartTime = $cartItemDate . ' ' . $cartItem->start_time;
-                            // Handle midnight crossing
-                            $cartStartTime = \Carbon\Carbon::parse($cartItem->start_time);
-                            $cartEndTime = \Carbon\Carbon::parse($cartItem->end_time);
-                            if ($cartEndTime->lte($cartStartTime)) {
-                                $endDate = \Carbon\Carbon::parse($cartItemDate)->addDay()->format('Y-m-d');
-                                $parentEndTime = $endDate . ' ' . $cartItem->end_time;
-                            } else {
-                                $parentEndTime = $cartItemDate . ' ' . $cartItem->end_time;
-                            }
-                        }
-
-                        // Find the associated booking if it exists
-                        if (!$pendingBookingId) {
-                            $associatedBooking = Booking::where('cart_transaction_id', $cartTrans->id)
-                                ->where('court_id', $item['court_id'])
-                                ->where('start_time', $parentStartTime)
-                                ->where('end_time', $parentEndTime)
-                                ->first();
-                            if ($associatedBooking) {
-                                $pendingBookingId = $associatedBooking->id;
-                                // Use booking's times if found
-                                $parentStartTime = $associatedBooking->start_time;
-                                $parentEndTime = $associatedBooking->end_time;
-                            }
-                        }
-                        break;
-                    }
                 }
 
                 // If there's a booking pending approval, add ALL users to waitlist (no bypassing)
@@ -771,11 +740,11 @@ class CartController extends Controller
                         $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
                             $q->where('booking_date', $bookingDate)
                               ->where(function ($sq) use ($startDateTime, $endDateTime) {
-                                  $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                  $sq->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
                                       [$startDateTime, $endDateTime])
-                                     ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                     ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
                                       [$startDateTime, $endDateTime])
-                                     ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                     ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
                                       [$startDateTime, $endDateTime]);
                               });
                         });
@@ -785,11 +754,11 @@ class CartController extends Controller
                             $query->orWhere(function ($q) use ($prevDate, $startDateTime, $endDateTime) {
                                 $q->where('booking_date', $prevDate)
                                   ->where(function ($sq) use ($startDateTime, $endDateTime) {
-                                      $sq->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                      $sq->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
                                           [$startDateTime, $endDateTime])
-                                         ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                         ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
                                           [$startDateTime, $endDateTime])
-                                         ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                         ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
                                           [$startDateTime, $endDateTime]);
                                   });
                             });
@@ -1236,17 +1205,19 @@ class CartController extends Controller
                         ->where('cart_transaction_id', '!=', $cartTransaction->id)
                         ->where('status', 'pending')
                         ->whereHas('cartTransaction', function($query) {
-                            // Include both pending and approved (exclude rejected)
-                            $query->whereIn('approval_status', ['pending', 'approved'])
+                            // Only check truly active transactions (pending status)
+                            $query->where('status', 'pending')
+                                  ->whereIn('approval_status', ['pending', 'approved'])
                                   ->whereIn('payment_status', ['unpaid', 'paid']);
                         })
                         ->where(function ($query) use ($startDateTime, $endDateTime, $group) {
                             // Construct full datetime for comparison to handle midnight crossing
-                            $query->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                            // Use DATE() to extract date from datetime column
+                            $query->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
                                 [$startDateTime, $endDateTime])
-                              ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                              ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
                                 [$startDateTime, $endDateTime])
-                              ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                              ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
                                 [$startDateTime, $endDateTime]);
                         })
                         ->exists();

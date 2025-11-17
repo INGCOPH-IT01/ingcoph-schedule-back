@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\BookingWaitlist;
+use App\Models\CartItem;
 use App\Models\Court;
 use App\Mail\BookingApprovalMail;
 use App\Events\BookingCreated;
@@ -725,7 +726,7 @@ class BookingController extends Controller
 
         // Get all non-cancelled bookings for this court on the specified date
         // IMPORTANT: Only actual Booking records should affect slot availability
-        // Cart items (not yet checked out) should NOT block slots or trigger waitlist
+        // Get all active bookings for this court on this date
         $bookings = Booking::with(['user', 'bookingForUser'])
             ->where('court_id', $courtId)
             ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']) // Only consider active bookings
@@ -758,6 +759,9 @@ class BookingController extends Controller
                 break;
             }
 
+            $slotStartDateTime = $currentTime->format('Y-m-d H:i:s');
+            $slotEndDateTime = $slotEnd->format('Y-m-d H:i:s');
+
             // Check if this time slot conflicts with any existing booking
             $conflictingBooking = $bookings->first(function ($booking) use ($currentTime, $slotEnd) {
                 // Parse booking times without timezone conversion since they're stored as local time strings
@@ -768,7 +772,31 @@ class BookingController extends Controller
                 return $currentTime->lt($bookingEnd) && $slotEnd->gt($bookingStart);
             });
 
+            // Also check for conflicting cart items (same logic as cart creation)
+            $conflictingCartItem = null;
             if (!$conflictingBooking) {
+                $conflictingCartItem = CartItem::where('court_id', $courtId)
+                    ->where('status', 'pending')
+                    ->whereHas('cartTransaction', function($query) {
+                        // Only check truly active transactions (pending status)
+                        $query->where('status', 'pending')
+                              ->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved'])
+                              ->whereIn('payment_status', ['unpaid', 'paid']);
+                    })
+                    ->where(function ($query) use ($slotStartDateTime, $slotEndDateTime) {
+                        // Use full datetime comparison for accuracy (DATE() extracts date from datetime column)
+                        $query->whereRaw("CONCAT(DATE(booking_date), ' ', start_time) >= ? AND CONCAT(DATE(booking_date), ' ', start_time) < ?",
+                            [$slotStartDateTime, $slotEndDateTime])
+                          ->orWhereRaw("CONCAT(DATE(booking_date), ' ', end_time) > ? AND CONCAT(DATE(booking_date), ' ', end_time) <= ?",
+                            [$slotStartDateTime, $slotEndDateTime])
+                          ->orWhereRaw("CONCAT(DATE(booking_date), ' ', start_time) <= ? AND CONCAT(DATE(booking_date), ' ', end_time) >= ?",
+                            [$slotStartDateTime, $slotEndDateTime]);
+                    })
+                    ->with('cartTransaction')
+                    ->first();
+            }
+
+            if (!$conflictingBooking && !$conflictingCartItem) {
                 // Regular available slot - use time-based pricing
                 $price = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
                 $availableSlots[] = [
@@ -783,81 +811,151 @@ class BookingController extends Controller
                     'is_booked' => false
                 ];
             } else {
-                // Slot has a conflicting booking - show booking info
-                $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
-                $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
-                $bookingDuration = $bookingEnd->diffInHours($bookingStart);
-                // Use time-based pricing for this 1-hour slot
-                $bookingPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
+                // Slot has a conflict - either with a booking or cart item
+                if ($conflictingBooking) {
+                    // Handle conflicting booking - show booking info
+                    $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
+                    $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
+                    $bookingDuration = $bookingEnd->diffInHours($bookingStart);
+                    // Use time-based pricing for this 1-hour slot
+                    $bookingPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
 
-                // Check booking status and payment status
-                $bookingStatus = $conflictingBooking->status ?? 'pending';
-                $bookingPaymentStatus = $conflictingBooking->payment_status ?? 'unpaid';
-                $isBookingApproved = $bookingStatus === 'approved';
-                $isBookingPaid = $bookingPaymentStatus === 'paid';
+                    // Check booking status and payment status
+                    $bookingStatus = $conflictingBooking->status ?? 'pending';
+                    $bookingPaymentStatus = $conflictingBooking->payment_status ?? 'unpaid';
+                    $isBookingApproved = $bookingStatus === 'approved';
+                    $isBookingPaid = $bookingPaymentStatus === 'paid';
 
-                // Get customer information from booking
-                $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
-                // Display name priority: booking_for_user_name > admin_notes > user's name
-                $bookingDisplayName = $conflictingBooking->booking_for_user_name
-                    ?? $conflictingBooking->admin_notes
-                    ?? ($bookingEffectiveUser ? $bookingEffectiveUser->name : null);
-                $bookingCreatedByUser = $conflictingBooking->user;
-                $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
+                    // Get customer information from booking
+                    $bookingEffectiveUser = $conflictingBooking->bookingForUser ?? $conflictingBooking->user;
+                    // Display name priority: booking_for_user_name > admin_notes > user's name
+                    $bookingDisplayName = $conflictingBooking->booking_for_user_name
+                        ?? $conflictingBooking->admin_notes
+                        ?? ($bookingEffectiveUser ? $bookingEffectiveUser->name : null);
+                    $bookingCreatedByUser = $conflictingBooking->user;
+                    $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
 
-                // Determine display type
-                // Admin/Staff bookings are always considered booked (no approval check needed)
-                // User bookings need approval AND payment to be booked
-                $bookingDisplayType = 'waitlist_available';
-                if (($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) {
-                    $bookingDisplayType = 'booking';
-                } elseif (!$isBookingApproved && $isBookingPaid) {
-                    $bookingDisplayType = 'pending_approval';
+                    // Check if waitlist feature is enabled
+                    $isWaitlistEnabled = WaitlistHelper::isWaitlistEnabled();
+
+                    // Determine display type
+                    // Admin/Staff bookings are always considered booked (no approval check needed)
+                    // User bookings need approval AND payment to be booked
+                    $bookingDisplayType = 'waitlist_available';
+                    if (($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) {
+                        $bookingDisplayType = 'booking';
+                    } elseif (!$isBookingApproved && $isBookingPaid) {
+                        $bookingDisplayType = 'pending_approval';
+                    }
+
+                    // Calculate if waitlist is available
+                    // Waitlist is only available if:
+                    // 1. The slot is not fully booked (not approved+paid or admin booking)
+                    // 2. AND waitlist feature is enabled
+                    $isWaitlistAvailable = !(($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) && $isWaitlistEnabled;
+
+                    // Show current 1-hour slot with booking info
+                    $availableSlots[] = [
+                        'start' => $currentTime->format('H:i'),
+                        'end' => $slotEnd->format('H:i'),
+                        'start_time' => $currentTime->format('Y-m-d H:i:s'),
+                        'end_time' => $slotEnd->format('Y-m-d H:i:s'),
+                        'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
+                        'duration_hours' => 1,
+                        'price' => $bookingPrice,
+                        'available' => false,
+                        'is_booked' => ($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking, // User bookings: approved AND paid; Admin/Staff bookings: always booked
+                        'is_pending_approval' => !$isBookingApproved && $isBookingPaid && !$isBookingAdminBooking, // Paid but pending (user bookings only)
+                        'is_waitlist_available' => $isWaitlistAvailable, // Only true if slot not fully booked AND waitlist feature is enabled
+                        'is_unpaid' => !$isBookingPaid,
+                        'booking_id' => $conflictingBooking->id,
+                        'type' => $bookingDisplayType,
+                        'status' => $bookingStatus,
+                        'payment_status' => $bookingPaymentStatus,
+                        // Customer information
+                        'display_name' => $bookingDisplayName,
+                        'booking_for_user_name' => $conflictingBooking->booking_for_user_name,
+                        'admin_notes' => $conflictingBooking->admin_notes,
+                        'user_name' => $conflictingBooking->user->name ?? null,
+                        'user_email' => $bookingEffectiveUser->email ?? null,
+                        'user_phone' => $bookingEffectiveUser->phone ?? null,
+                        'effective_user' => $bookingEffectiveUser ? [
+                            'id' => $bookingEffectiveUser->id,
+                            'name' => $bookingEffectiveUser->name,
+                            'email' => $bookingEffectiveUser->email,
+                            'phone' => $bookingEffectiveUser->phone ?? null
+                        ] : null,
+                        // Admin booking information
+                        'is_admin_booking' => $isBookingAdminBooking,
+                        'created_by' => $bookingCreatedByUser ? [
+                            'id' => $bookingCreatedByUser->id,
+                            'name' => $bookingCreatedByUser->name,
+                            'role' => $bookingCreatedByUser->role
+                        ] : null,
+                        // Additional info about the full booking
+                        'full_booking_start' => $bookingStart->format('H:i'),
+                        'full_booking_end' => $bookingEnd->format('H:i'),
+                        'full_booking_duration' => $bookingDuration
+                    ];
+                } else if ($conflictingCartItem) {
+                    // Handle conflicting cart item - treat as pending approval (waitlist available)
+                    $cartTransaction = $conflictingCartItem->cartTransaction;
+                    $cartItemPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
+
+                    // Cart items are always pending and unpaid (or approved but unpaid)
+                    $isWaitlistEnabled = WaitlistHelper::isWaitlistEnabled();
+
+                    // Get user information from cart transaction
+                    $cartUser = $cartTransaction->user ?? null;
+                    $isCartAdminBooking = $cartUser && in_array($cartUser->role, ['admin', 'staff']);
+
+                    // Cart items with pending/approved approval_status should show as pending approval
+                    $cartDisplayType = 'pending_approval';
+                    $isWaitlistAvailable = $isWaitlistEnabled; // Waitlist available since cart item hasn't been fully confirmed
+
+                    $availableSlots[] = [
+                        'start' => $currentTime->format('H:i'),
+                        'end' => $slotEnd->format('H:i'),
+                        'start_time' => $currentTime->format('Y-m-d H:i:s'),
+                        'end_time' => $slotEnd->format('Y-m-d H:i:s'),
+                        'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
+                        'duration_hours' => 1,
+                        'price' => $cartItemPrice,
+                        'available' => false,
+                        'is_booked' => false, // Cart items are not yet booked
+                        'is_pending_approval' => true, // Cart items are always pending
+                        'is_waitlist_available' => $isWaitlistAvailable,
+                        'is_unpaid' => true, // Cart items are always unpaid
+                        'booking_id' => null, // No booking ID yet for cart items
+                        'type' => $cartDisplayType,
+                        'status' => 'pending',
+                        'payment_status' => $cartTransaction->payment_status ?? 'unpaid',
+                        // Customer information
+                        'display_name' => $conflictingCartItem->booking_for_user_name ?? ($cartUser ? $cartUser->name : 'Unknown'),
+                        'booking_for_user_name' => $conflictingCartItem->booking_for_user_name,
+                        'admin_notes' => $conflictingCartItem->admin_notes,
+                        'user_name' => $cartUser->name ?? null,
+                        'user_email' => $cartUser->email ?? null,
+                        'user_phone' => $cartUser->phone ?? null,
+                        'effective_user' => $cartUser ? [
+                            'id' => $cartUser->id,
+                            'name' => $cartUser->name,
+                            'email' => $cartUser->email,
+                            'phone' => $cartUser->phone ?? null
+                        ] : null,
+                        // Admin booking information
+                        'is_admin_booking' => $isCartAdminBooking,
+                        'created_by' => $cartUser ? [
+                            'id' => $cartUser->id,
+                            'name' => $cartUser->name,
+                            'role' => $cartUser->role
+                        ] : null,
+                        // Additional info - use cart item's times
+                        'full_booking_start' => Carbon::parse($conflictingCartItem->start_time)->format('H:i'),
+                        'full_booking_end' => Carbon::parse($conflictingCartItem->end_time)->format('H:i'),
+                        'full_booking_duration' => Carbon::parse($conflictingCartItem->end_time)->diffInHours(Carbon::parse($conflictingCartItem->start_time))
+                    ];
                 }
-
-                // Show current 1-hour slot with booking info
-                $availableSlots[] = [
-                    'start' => $currentTime->format('H:i'),
-                    'end' => $slotEnd->format('H:i'),
-                    'start_time' => $currentTime->format('Y-m-d H:i:s'),
-                    'end_time' => $slotEnd->format('Y-m-d H:i:s'),
-                    'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
-                    'duration_hours' => 1,
-                    'price' => $bookingPrice,
-                    'available' => false,
-                    'is_booked' => ($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking, // User bookings: approved AND paid; Admin/Staff bookings: always booked
-                    'is_pending_approval' => !$isBookingApproved && $isBookingPaid && !$isBookingAdminBooking, // Paid but pending (user bookings only)
-                    'is_waitlist_available' => !(($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking), // False only when fully booked
-                    'is_unpaid' => !$isBookingPaid,
-                    'booking_id' => $conflictingBooking->id,
-                    'type' => $bookingDisplayType,
-                    'status' => $bookingStatus,
-                    'payment_status' => $bookingPaymentStatus,
-                    // Customer information
-                    'display_name' => $bookingDisplayName,
-                    'booking_for_user_name' => $conflictingBooking->booking_for_user_name,
-                    'admin_notes' => $conflictingBooking->admin_notes,
-                    'user_name' => $conflictingBooking->user->name ?? null,
-                    'user_email' => $bookingEffectiveUser->email ?? null,
-                    'user_phone' => $bookingEffectiveUser->phone ?? null,
-                    'effective_user' => $bookingEffectiveUser ? [
-                        'id' => $bookingEffectiveUser->id,
-                        'name' => $bookingEffectiveUser->name,
-                        'email' => $bookingEffectiveUser->email,
-                        'phone' => $bookingEffectiveUser->phone ?? null
-                    ] : null,
-                    // Admin booking information
-                    'is_admin_booking' => $isBookingAdminBooking,
-                    'created_by' => $bookingCreatedByUser ? [
-                        'id' => $bookingCreatedByUser->id,
-                        'name' => $bookingCreatedByUser->name,
-                        'role' => $bookingCreatedByUser->role
-                    ] : null,
-                    // Additional info about the full booking
-                    'full_booking_start' => $bookingStart->format('H:i'),
-                    'full_booking_end' => $bookingEnd->format('H:i'),
-                    'full_booking_duration' => $bookingDuration
-                ];
             }
 
             $currentTime->addHour();
