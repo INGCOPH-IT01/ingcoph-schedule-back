@@ -23,5 +23,8 @@ class DatabaseSeeder extends Seeder
             SportSeeder::class,
             CourtSeeder::class,
         ]);
+
+        // Note: For data consistency checks and fixes, run separately:
+        // php artisan db:seed --class=DataConsistencyAnalyzerSeeder
     }
 }
