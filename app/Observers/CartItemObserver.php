@@ -49,15 +49,17 @@ class CartItemObserver
         }
 
         // Find bookings associated with this cart transaction and court
+        // Exclude only cancelled and rejected bookings
         $bookings = Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
             ->where('court_id', $cartItem->court_id)
+            ->whereNotIn('status', ['cancelled', 'rejected'])
             ->get();
 
         foreach ($bookings as $booking) {
-            // Get all active (non-cancelled) cart items for this booking's court
+            // Get all active (non-cancelled, non-rejected) cart items for this booking's court
             $activeCartItems = CartItem::where('cart_transaction_id', $cartItem->cart_transaction_id)
                 ->where('court_id', $booking->court_id)
-                ->where('status', '!=', 'cancelled')
+                ->whereNotIn('status', ['cancelled', 'rejected'])
                 ->orderBy('booking_date')
                 ->orderBy('start_time')
                 ->get();
@@ -104,6 +106,8 @@ class CartItemObserver
                     Log::info("Booking #{$booking->id} synced after cart item cancellation", [
                         'old_start' => $booking->getOriginal('start_time'),
                         'new_start' => $startTime->format('Y-m-d H:i:s'),
+                        'old_end' => $booking->getOriginal('end_time'),
+                        'new_end' => $endTime->format('Y-m-d H:i:s'),
                         'old_price' => $booking->getOriginal('total_price'),
                         'new_price' => $totalPrice
                     ]);
@@ -148,6 +152,7 @@ class CartItemObserver
         // A booking might span multiple cart items (e.g., booking from 9-12, cart item from 10-11)
         $affectedBookings = Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
             ->where('court_id', $oldCourtId)
+            ->whereNotIn('status', ['cancelled', 'rejected'])
             ->where(function ($query) use ($startDateTime, $endDateTime) {
                 $query->where(function ($q) use ($startDateTime, $endDateTime) {
                     // Booking overlaps with cart item time range
@@ -168,7 +173,7 @@ class CartItemObserver
             // Get all active cart items for this booking's transaction and date range
             // that fall within or overlap with the original booking time
             $allCartItems = CartItem::where('cart_transaction_id', $cartItem->cart_transaction_id)
-                ->where('status', '!=', 'cancelled')
+                ->whereNotIn('status', ['cancelled', 'rejected'])
                 ->where('booking_date', $bookingDate)
                 ->orderBy('start_time')
                 ->get();
@@ -290,7 +295,7 @@ class CartItemObserver
             return;
         }
 
-        $oldBookingDate = Carbon::parse($cartItem->getOriginal('booking_date'))->format('Y-m-d');
+        $oldBookingDate = $cartItem->getOriginal('booking_date') ? Carbon::parse($cartItem->getOriginal('booking_date'))->format('Y-m-d') : null;
         $newBookingDate = Carbon::parse($cartItem->booking_date)->format('Y-m-d');
         $oldStartTime = $cartItem->getOriginal('start_time');
         $oldEndTime = $cartItem->getOriginal('end_time');
@@ -306,28 +311,11 @@ class CartItemObserver
             'new_end_time' => $newEndTime,
         ]);
 
-        // Build old datetime strings
-        $oldStartDateTime = $oldBookingDate . ' ' . $oldStartTime;
-        $oldEndDateTime = $oldBookingDate . ' ' . $oldEndTime;
-
-        // Handle midnight crossing for old times
-        $oldStart = Carbon::parse($oldStartDateTime);
-        $oldEnd = Carbon::parse($oldEndDateTime);
-        if ($oldEnd->lte($oldStart)) {
-            $oldEndDateTime = Carbon::parse($oldBookingDate)->addDay()->format('Y-m-d') . ' ' . $oldEndTime;
-        }
-
-        // Find booking(s) that overlap with the OLD time range (these need updating)
+        // Get all bookings for this cart transaction and court
+        // We need to recalculate all of them since times have changed
         $affectedBookings = Booking::where('cart_transaction_id', $cartItem->cart_transaction_id)
             ->where('court_id', $cartItem->court_id)
-            ->whereIn('status', ['pending', 'approved', 'completed'])
-            ->where(function ($query) use ($oldStartDateTime, $oldEndDateTime) {
-                $query->where(function ($q) use ($oldStartDateTime, $oldEndDateTime) {
-                    // Booking overlaps with old cart item time range
-                    $q->where('start_time', '<', $oldEndDateTime)
-                      ->where('end_time', '>', $oldStartDateTime);
-                });
-            })
+            ->whereNotIn('status', ['cancelled', 'rejected'])
             ->get();
 
         if ($affectedBookings->isEmpty()) {
@@ -341,7 +329,7 @@ class CartItemObserver
             // Get all active cart items for this transaction, court
             $allCartItems = CartItem::where('cart_transaction_id', $cartItem->cart_transaction_id)
                 ->where('court_id', $booking->court_id)
-                ->where('status', '!=', 'cancelled')
+                ->whereNotIn('status', ['cancelled', 'rejected'])
                 ->orderBy('booking_date')
                 ->orderBy('start_time')
                 ->get();
@@ -353,38 +341,44 @@ class CartItemObserver
                 continue;
             }
 
-            // Re-group all cart items by court and consecutive time slots
-            // Group by date as well to handle multi-day scenarios
-            $groups = $this->groupCartItemsByCourtDateAndTime($allCartItems);
+            // Recalculate booking times from all cart items
+            // Find the earliest start time and latest end time
+            $earliestStart = null;
+            $latestEnd = null;
+            $totalPrice = 0;
 
-            // Find which group this booking should match
-            // The booking should match the group that overlaps with its current time range
-            $matchingGroup = null;
-            foreach ($groups as $group) {
-                $groupStart = Carbon::parse($group['start_time']);
-                $groupEnd = Carbon::parse($group['end_time']);
-                $bookingStart = Carbon::parse($booking->start_time);
-                $bookingEnd = Carbon::parse($booking->end_time);
+            foreach ($allCartItems as $item) {
+                $itemDate = Carbon::parse($item->booking_date)->format('Y-m-d');
+                $itemStartDateTime = Carbon::parse($itemDate . ' ' . $item->start_time);
+                $itemEndDateTime = Carbon::parse($itemDate . ' ' . $item->end_time);
 
-                // Check if group overlaps with current booking
-                if ($groupStart->lt($bookingEnd) && $groupEnd->gt($bookingStart)) {
-                    $matchingGroup = $group;
-                    break;
+                // Handle midnight crossing
+                if ($itemEndDateTime->lte($itemStartDateTime)) {
+                    $itemEndDateTime->addDay();
                 }
+
+                // Track earliest start
+                if ($earliestStart === null || $itemStartDateTime->lt($earliestStart)) {
+                    $earliestStart = $itemStartDateTime;
+                }
+
+                // Track latest end
+                if ($latestEnd === null || $itemEndDateTime->gt($latestEnd)) {
+                    $latestEnd = $itemEndDateTime;
+                }
+
+                $totalPrice += floatval($item->price);
             }
 
-            if ($matchingGroup) {
-                // Update the booking to match the group
+            if ($earliestStart && $latestEnd) {
+                // Update booking with recalculated values
                 $booking->update([
-                    'start_time' => $matchingGroup['start_time'],
-                    'end_time' => $matchingGroup['end_time'],
-                    'total_price' => $matchingGroup['price']
+                    'start_time' => $earliestStart->format('Y-m-d H:i:s'),
+                    'end_time' => $latestEnd->format('Y-m-d H:i:s'),
+                    'total_price' => $totalPrice
                 ]);
-                Log::info("Updated booking #{$booking->id} to {$matchingGroup['start_time']} - {$matchingGroup['end_time']} (₱{$matchingGroup['price']})");
-            } else {
-                // No matching group - this booking should be cancelled
-                $booking->update(['status' => 'cancelled']);
-                Log::info("Booking #{$booking->id} cancelled - no matching cart item group");
+
+                Log::info("Updated booking #{$booking->id} to {$earliestStart->format('Y-m-d H:i:s')} - {$latestEnd->format('Y-m-d H:i:s')} (₱{$totalPrice})");
             }
         }
 
