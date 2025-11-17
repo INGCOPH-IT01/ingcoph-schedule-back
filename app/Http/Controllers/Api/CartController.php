@@ -254,9 +254,14 @@ class CartController extends Controller
 
                 // FIX #12: Check for conflicting cart items with proper midnight crossing support
                 // IMPORTANT: Exclude items from the current transaction being built in this request
+                // Also exclude rejected cart items for better performance
                 $conflictingCartItems = CartItem::where('court_id', $item['court_id'])
                     ->where('status', 'pending')
                     ->where('cart_transaction_id', '!=', $cartTransaction->id) // Exclude items from current transaction
+                    ->whereHas('cartTransaction', function($query) {
+                        // Exclude rejected transactions (only check pending/approved)
+                        $query->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved']);
+                    })
                     ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
                         // Check cart items on the same date
                         $query->where(function ($q) use ($bookingDate, $startDateTime, $endDateTime) {
@@ -1203,7 +1208,7 @@ class CartController extends Controller
                     $endDateTime = $group['booking_date'] . ' ' . $group['end_time'];
                 }
 
-                // Final availability check - only check active bookings (exclude cancelled/rejected)
+                // Final availability check - check active bookings (exclude cancelled/rejected)
                 $isBooked = Booking::where('court_id', $group['court_id'])
                     ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
                     ->where(function ($query) use ($startDateTime, $endDateTime) {
@@ -1223,6 +1228,33 @@ class CartController extends Controller
                         });
                     })
                     ->exists();
+
+                // Also check for approved cart items that haven't been converted to bookings yet
+                // This prevents double bookings when cart transactions are approved but not yet paid
+                if (!$isBooked) {
+                    $conflictingCartItems = CartItem::where('court_id', $group['court_id'])
+                        ->where('cart_transaction_id', '!=', $cartTransaction->id)
+                        ->where('status', 'pending')
+                        ->whereHas('cartTransaction', function($query) {
+                            // Include both pending and approved (exclude rejected)
+                            $query->whereIn('approval_status', ['pending', 'approved'])
+                                  ->whereIn('payment_status', ['unpaid', 'paid']);
+                        })
+                        ->where(function ($query) use ($startDateTime, $endDateTime, $group) {
+                            // Construct full datetime for comparison to handle midnight crossing
+                            $query->whereRaw("CONCAT(booking_date, ' ', start_time) >= ? AND CONCAT(booking_date, ' ', start_time) < ?",
+                                [$startDateTime, $endDateTime])
+                              ->orWhereRaw("CONCAT(booking_date, ' ', end_time) > ? AND CONCAT(booking_date, ' ', end_time) <= ?",
+                                [$startDateTime, $endDateTime])
+                              ->orWhereRaw("CONCAT(booking_date, ' ', start_time) <= ? AND CONCAT(booking_date, ' ', end_time) >= ?",
+                                [$startDateTime, $endDateTime]);
+                        })
+                        ->exists();
+
+                    if ($conflictingCartItems) {
+                        $isBooked = true;
+                    }
+                }
 
                 if ($isBooked) {
                     DB::rollBack();
@@ -1513,7 +1545,7 @@ class CartController extends Controller
                 $conflictingCartItem = CartItem::where('court_id', $court->id)
                     ->where('id', '!=', $id)
                     ->where('booking_date', $bookingDate)
-                    ->where('status', '!=', 'cancelled')
+                    ->whereNotIn('status', ['cancelled', 'rejected'])
                     ->whereHas('cartTransaction', function($query) {
                         $query->whereIn('approval_status', ['pending', 'approved'])
                               ->whereIn('payment_status', ['unpaid', 'paid']);
@@ -1656,7 +1688,7 @@ class CartController extends Controller
             $conflictingCartItem = CartItem::where('court_id', $courtId)
                 ->where('id', '!=', $id)
                 ->where('booking_date', $bookingDate)
-                ->where('status', '!=', 'cancelled')
+                ->whereNotIn('status', ['cancelled', 'rejected'])
                 ->whereHas('cartTransaction', function($query) {
                     $query->whereIn('approval_status', ['pending', 'approved'])
                           ->whereIn('payment_status', ['unpaid', 'paid']);
@@ -1776,7 +1808,7 @@ class CartController extends Controller
             // Check if this is the last item in the transaction
             if ($transactionId) {
                 $itemCount = CartItem::where('cart_transaction_id', $transactionId)
-                    ->where('status', '!=', 'cancelled')
+                    ->whereNotIn('status', ['cancelled', 'rejected'])
                     ->count();
 
                 if ($itemCount <= 1) {
@@ -1795,9 +1827,9 @@ class CartController extends Controller
             if ($transactionId) {
                 $cartTransaction = CartTransaction::find($transactionId);
                 if ($cartTransaction) {
-                    // Recalculate total from non-cancelled items
+                    // Recalculate total from non-cancelled, non-rejected items
                     $newTotal = CartItem::where('cart_transaction_id', $transactionId)
-                        ->where('status', '!=', 'cancelled')
+                        ->whereNotIn('status', ['cancelled', 'rejected'])
                         ->sum('price');
 
                     $cartTransaction->update([
