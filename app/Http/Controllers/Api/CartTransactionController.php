@@ -224,6 +224,9 @@ class CartTransactionController extends Controller
                 Booking::whereIn('id', $bookingIds)->update(['status' => 'approved']);
             }
 
+            // Bulk update all cart items to 'approved' status for data consistency
+            $transaction->cartItems()->update(['status' => 'approved']);
+
             // Update individual QR codes (within same transaction)
             foreach ($transaction->bookings()->whereIn('id', $bookingIds)->get() as $booking) {
                 // Generate unique QR code for each booking
@@ -419,6 +422,9 @@ class CartTransactionController extends Controller
             $transaction->bookings()->update([
                 'status' => 'rejected'
             ]);
+
+            // Bulk update all cart items to 'rejected' status for data consistency
+            $transaction->cartItems()->update(['status' => 'rejected']);
 
             // Notify waitlist users within same transaction - slots are now available
             $this->notifyWaitlistUsers($transaction, 'rejected');
