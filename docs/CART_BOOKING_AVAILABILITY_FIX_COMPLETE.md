@@ -79,25 +79,16 @@ Why? whereHas('bookings', function($q) {
 
 ### 1. BookingController.php
 
-**Method: `availableSlots()`**
+**Method: `availableSlots()`** (Line ~777-784)
 
 ```php
-// Get all active bookings (line 730-735)
-$bookings = Booking::with(['user', 'bookingForUser'])
-    ->where('court_id', $courtId)
-    ->whereIn('status', ['pending', 'approved', 'completed', 'checked_in'])
-    ->whereBetween('start_time', [$startOfDay, $endOfDay])
-    ->get();
-
-// Check overlap (line 766-773)
-$conflictingBooking = $bookings->first(function ($booking) use ($currentTime, $slotEnd) {
-    $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $booking->start_time);
-    $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $booking->end_time);
-    return $currentTime->lt($bookingEnd) && $slotEnd->gt($bookingStart);
-});
+->whereHas('cartTransaction', function($query) {
+    // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+    $query->whereHas('bookings', function($bookingQuery) {
+        $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+    });
+})
 ```
-
-**Key Change:** Removed cart item checking entirely - the initial booking query already includes ALL bookings (from cart checkout or direct creation)
 
 ### 2. CartController.php
 
