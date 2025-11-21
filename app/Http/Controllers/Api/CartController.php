@@ -259,10 +259,10 @@ class CartController extends Controller
                     ->where('status', 'pending')
                     ->where('cart_transaction_id', '!=', $cartTransaction->id) // Exclude items from current transaction
                     ->whereHas('cartTransaction', function($query) {
-                        // Only check truly active transactions (pending status)
-                        // Exclude completed, rejected, or cancelled transactions
-                        $query->where('status', 'pending')
-                              ->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved']);
+                        // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                        $query->whereHas('bookings', function($bookingQuery) {
+                            $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                        });
                     })
                     ->where(function ($query) use ($bookingDate, $startDateTime, $endDateTime, $crossesMidnight) {
                         // Check cart items on the same date
@@ -765,8 +765,10 @@ class CartController extends Controller
                         }
                     })
                     ->whereHas('cartTransaction', function($query) {
-                        $query->where('approval_status', 'approved')
-                              ->where('payment_status', 'paid');
+                        // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                        $query->whereHas('bookings', function($bookingQuery) {
+                            $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                        });
                     })
                     ->exists();
 
@@ -1198,17 +1200,17 @@ class CartController extends Controller
                     })
                     ->exists();
 
-                // Also check for approved cart items that haven't been converted to bookings yet
-                // This prevents double bookings when cart transactions are approved but not yet paid
+                // Also check for cart items, but ONLY if their CartTransaction has associated Bookings
+                // This prevents blocking slots for cart items that were never checked out
                 if (!$isBooked) {
                     $conflictingCartItems = CartItem::where('court_id', $group['court_id'])
                         ->where('cart_transaction_id', '!=', $cartTransaction->id)
                         ->where('status', 'pending')
                         ->whereHas('cartTransaction', function($query) {
-                            // Only check truly active transactions (pending status)
-                            $query->where('status', 'pending')
-                                  ->whereIn('approval_status', ['pending', 'approved'])
-                                  ->whereIn('payment_status', ['unpaid', 'paid']);
+                            // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                            $query->whereHas('bookings', function($bookingQuery) {
+                                $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                            });
                         })
                         ->where(function ($query) use ($startDateTime, $endDateTime, $group) {
                             // Construct full datetime for comparison to handle midnight crossing
@@ -1518,8 +1520,10 @@ class CartController extends Controller
                     ->where('booking_date', $bookingDate)
                     ->whereNotIn('status', ['cancelled', 'rejected'])
                     ->whereHas('cartTransaction', function($query) {
-                        $query->whereIn('approval_status', ['pending', 'approved'])
-                              ->whereIn('payment_status', ['unpaid', 'paid']);
+                        // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                        $query->whereHas('bookings', function($bookingQuery) {
+                            $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                        });
                     })
                     ->where(function ($query) use ($cartItem) {
                         $query->where(function ($q) use ($cartItem) {
@@ -1656,13 +1660,16 @@ class CartController extends Controller
             }
 
             // Check for conflicts with other cart items on the court
+            // Only check cart items whose transaction has active bookings (not cancelled/rejected)
             $conflictingCartItem = CartItem::where('court_id', $courtId)
                 ->where('id', '!=', $id)
                 ->where('booking_date', $bookingDate)
                 ->whereNotIn('status', ['cancelled', 'rejected'])
                 ->whereHas('cartTransaction', function($query) {
-                    $query->whereIn('approval_status', ['pending', 'approved'])
-                          ->whereIn('payment_status', ['unpaid', 'paid']);
+                    // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                    $query->whereHas('bookings', function($bookingQuery) {
+                        $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                    });
                 })
                 ->where(function ($query) use ($startTime, $endTime) {
                     $query->where(function ($q) use ($startTime, $endTime) {

@@ -31,7 +31,7 @@ When checkout happens:
 
 ## Implementation
 
-### 1. Check Cart Items Only If They Have Associated Bookings
+### 1. Check Cart Items Only If They Have Active Bookings
 
 ```php
 // Also check for conflicting cart items, but ONLY if their CartTransaction has associated Bookings
@@ -41,8 +41,10 @@ if (!$conflictingBooking) {
     $conflictingCartItem = CartItem::where('court_id', $courtId)
         ->where('status', 'pending')
         ->whereHas('cartTransaction', function($query) {
-            // Only check cart items whose transaction has created bookings
-            $query->whereHas('bookings');
+            // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+            $query->whereHas('bookings', function($bookingQuery) {
+                $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+            });
         })
         ->where(function ($query) use ($slotStartDateTime, $slotEndDateTime) {
             // Time overlap checks...
@@ -52,9 +54,11 @@ if (!$conflictingBooking) {
 }
 ```
 
-**Key Line:** `$query->whereHas('bookings');`
+**Key Lines:**
+- `$query->whereHas('bookings', function($bookingQuery) {...})`
+- `$bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);`
 
-This ensures we only consider cart items whose `CartTransaction` has `Booking` records.
+This ensures we only consider cart items whose `CartTransaction` has **active** `Booking` records (excluding cancelled/rejected bookings).
 
 ### 2. Use Associated Booking Status for Display
 
@@ -89,7 +93,7 @@ User adds court slot to cart:
 └─ Result: availableSlots shows slot as AVAILABLE ✅
 
 Why?
-- whereHas('bookings') returns false
+- whereHas('bookings', function($q) { $q->whereIn('status', [...]) }) returns false
 - Cart item is NOT checked
 - No conflict found
 ```
@@ -98,13 +102,13 @@ Why?
 
 ```
 User checks out cart:
-├─ Booking created ✅
-├─ CartTransaction now has bookings ✅
+├─ Booking created (status: 'pending') ✅
+├─ CartTransaction now has active bookings ✅
 ├─ Cart items now match whereHas('bookings') ✅
 └─ Result: availableSlots shows slot as WAITLIST ✅
 
 Why?
-- whereHas('bookings') returns true
+- whereHas('bookings', function($q) { $q->whereIn('status', ['pending', ...]) }) returns true
 - Cart item IS checked
 - Conflict found → shows booking status
 ```
@@ -115,13 +119,28 @@ Why?
 Admin approves booking:
 ├─ Booking status: 'approved' ✅
 ├─ Booking payment_status: 'paid' ✅
-├─ Cart item still has whereHas('bookings') ✅
+├─ Cart item still has active bookings ✅
 └─ Result: availableSlots shows slot as BOOKED ✅
 
 Why?
-- whereHas('bookings') returns true
+- whereHas('bookings', function($q) { $q->whereIn('status', ['approved']) }) returns true
 - Associated booking status is 'approved' + 'paid'
 - Shows as fully booked
+```
+
+### Scenario 4: Booking Cancelled/Rejected
+
+```
+Admin cancels or rejects booking:
+├─ Booking status: 'cancelled' or 'rejected' ✅
+├─ Cart item's transaction has booking BUT status excluded ✅
+└─ Result: availableSlots shows slot as AVAILABLE ✅
+
+Why?
+- whereHas('bookings', function($q) { $q->whereIn('status', ['pending', 'approved', ...]) }) returns false
+- 'cancelled' and 'rejected' statuses are NOT in the whereIn list
+- Cart item is NOT checked
+- Slot becomes available again ✅
 ```
 
 ## Code Flow Diagram
@@ -157,6 +176,7 @@ WHERE court_id = ?
       AND EXISTS (
         SELECT 1 FROM bookings
         WHERE bookings.cart_transaction_id = cart_transactions.id
+          AND bookings.status IN ('pending', 'approved', 'completed', 'checked_in')
       )
   )
   AND (time overlap conditions)
@@ -164,8 +184,9 @@ WHERE court_id = ?
 
 This ensures:
 1. ✅ Cart items without bookings → NOT returned
-2. ✅ Cart items with bookings → Returned
-3. ✅ Only relevant to availability when bookings exist
+2. ✅ Cart items with active bookings → Returned
+3. ✅ Cart items with cancelled/rejected bookings → NOT returned (slot becomes available)
+4. ✅ Only relevant to availability when active bookings exist
 
 ## API Response Behavior
 
@@ -240,9 +261,13 @@ Result: Slot remains AVAILABLE ✅
 ```
 CartItem exists: ✅
 Booking exists: ✅ (but status='rejected')
-Result: Booking excluded from query (line 732)
-       Cart item also excluded (no booking in transaction)
+Result: Booking excluded from direct booking query (line 732 in BookingController)
+       Cart item excluded (whereHas filters out 'rejected' status)
        Slot becomes AVAILABLE ✅
+
+Technical:
+- Direct booking check: whereIn('status', ['pending', 'approved', ...]) - rejected excluded ✅
+- Cart item check: whereHas('bookings', function($q) { $q->whereIn('status', [...]) }) - rejected excluded ✅
 ```
 
 ### Case 3: Multiple Cart Items, One Transaction
@@ -292,8 +317,15 @@ public function cartTransaction(): BelongsTo
 ## Files Modified
 
 1. ✅ `/app/Http/Controllers/Api/BookingController.php`
-   - Lines 775-796: Added `whereHas('cartTransaction.bookings')` check
+   - Lines 775-796: Added `whereHas('cartTransaction.bookings')` check in `availableSlots()`
    - Lines 899-983: Handle cart items with associated bookings
+
+2. ✅ `/app/Http/Controllers/Api/CartController.php`
+   - Lines 258-266: Added booking check in `store()` - Add to Cart conflict check
+   - Lines 767-770: Added booking check in `validateCartAvailability()`
+   - Lines 1207-1210: Added booking check in `checkout()` - Final availability check
+   - Lines 1518-1520: Added booking check in `updateCartItem()` - Availability check
+   - Lines 1661-1664: Added booking check in `updateCartItemTime()` - Conflict check
 
 ## Testing Recommendations
 
@@ -351,19 +383,39 @@ GROUP BY ci.id;
 -- If booking_count > 0: Cart item will be checked
 ```
 
+## All Affected Methods
+
+This logic has been applied to all methods that check cart item conflicts:
+
+1. **`BookingController::availableSlots()`** - Show slot availability to users
+2. **`CartController::store()`** - Validate when adding items to cart
+3. **`CartController::validateCartAvailability()`** - Check existing cart validity
+4. **`CartController::checkout()`** - Final check before creating bookings
+5. **`CartController::updateCartItem()`** - Validate when updating cart item court/date
+6. **`CartController::updateCartItemTime()`** - Validate when changing time
+
 ## Summary
 
-**Key Principle:** Cart items only affect slot availability when their `CartTransaction` has created `Booking` records.
+**Key Principle:** Cart items only affect slot availability when their `CartTransaction` has **active** `Booking` records (not cancelled or rejected).
 
-**Implementation:** Use `whereHas('cartTransaction', function($query) { $query->whereHas('bookings'); })`
+**Implementation:**
+```php
+->whereHas('cartTransaction', function($query) {
+    $query->whereHas('bookings', function($bookingQuery) {
+        $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+    });
+})
+```
 
 **Result:**
-- ✅ Slots available when items only in cart
-- ✅ Slots unavailable when bookings created
-- ✅ Status reflects actual booking state
+- ✅ Slots available when items only in cart (no bookings)
+- ✅ Slots unavailable when active bookings exist
+- ✅ Slots available again when bookings are cancelled/rejected
+- ✅ Status reflects actual active booking state
+- ✅ Consistent logic across all availability checks
 
 ---
 
-**Status:** ✅ IMPLEMENTED
+**Status:** ✅ FULLY IMPLEMENTED
 **Date:** November 21, 2025
-**Applies to:** `BookingController::availableSlots()` method
+**Applies to:** All availability checking methods in `BookingController` and `CartController`
