@@ -1422,8 +1422,10 @@ class CartController extends Controller
                         ->update(['cart_transaction_id' => $newTransaction->id]);
                 }
             } else {
-                // Full checkout - mark all items as completed
-                CartItem::where('cart_transaction_id', $cartTransaction->id)->update(['status' => 'completed']);
+                // Full checkout - mark all pending items as completed
+                CartItem::where('cart_transaction_id', $cartTransaction->id)
+                    ->where('status', 'pending')
+                    ->update(['status' => 'completed']);
             }
 
             DB::commit();
