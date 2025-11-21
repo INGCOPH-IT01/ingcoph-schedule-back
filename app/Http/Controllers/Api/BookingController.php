@@ -772,16 +772,15 @@ class BookingController extends Controller
                 return $currentTime->lt($bookingEnd) && $slotEnd->gt($bookingStart);
             });
 
-            // Also check for conflicting cart items (same logic as cart creation)
+            // Also check for conflicting cart items, but ONLY if their CartTransaction has associated Bookings
+            // This ensures we only block slots when cart items have been converted to actual bookings
             $conflictingCartItem = null;
             if (!$conflictingBooking) {
                 $conflictingCartItem = CartItem::where('court_id', $courtId)
                     ->where('status', 'pending')
                     ->whereHas('cartTransaction', function($query) {
-                        // Only check truly active transactions (pending status)
-                        $query->where('status', 'pending')
-                              ->whereIn('approval_status', ['pending', 'pending_waitlist', 'approved'])
-                              ->whereIn('payment_status', ['unpaid', 'paid']);
+                        // Only check cart items whose transaction has created bookings
+                        $query->whereHas('bookings');
                     })
                     ->where(function ($query) use ($slotStartDateTime, $slotEndDateTime) {
                         // Use full datetime comparison for accuracy (DATE() extracts date from datetime column)
@@ -811,7 +810,7 @@ class BookingController extends Controller
                     'is_booked' => false
                 ];
             } else {
-                // Slot has a conflict - either with a booking or cart item
+                // Slot has a conflict - either with a booking or cart item (that has associated bookings)
                 if ($conflictingBooking) {
                     // Handle conflicting booking - show booking info
                     $bookingStart = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->start_time);
@@ -898,63 +897,89 @@ class BookingController extends Controller
                         'full_booking_duration' => $bookingDuration
                     ];
                 } else if ($conflictingCartItem) {
-                    // Handle conflicting cart item - treat as pending approval (waitlist available)
+                    // Handle conflicting cart item that has associated bookings
+                    // Note: We only reach here if cartTransaction has bookings
                     $cartTransaction = $conflictingCartItem->cartTransaction;
                     $cartItemPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
 
-                    // Cart items are always pending and unpaid (or approved but unpaid)
-                    $isWaitlistEnabled = WaitlistHelper::isWaitlistEnabled();
+                    // Get the associated booking to determine actual status
+                    $associatedBooking = $cartTransaction->bookings()
+                        ->where('court_id', $courtId)
+                        ->whereBetween('start_time', [$slotStartDateTime, $slotEndDateTime])
+                        ->first();
 
-                    // Get user information from cart transaction
-                    $cartUser = $cartTransaction->user ?? null;
-                    $isCartAdminBooking = $cartUser && in_array($cartUser->role, ['admin', 'staff']);
+                    if ($associatedBooking) {
+                        // Use the booking's status to determine display
+                        $bookingStatus = $associatedBooking->status ?? 'pending';
+                        $bookingPaymentStatus = $associatedBooking->payment_status ?? 'unpaid';
+                        $isBookingApproved = $bookingStatus === 'approved';
+                        $isBookingPaid = $bookingPaymentStatus === 'paid';
 
-                    // Cart items with pending/approved approval_status should show as pending approval
-                    $cartDisplayType = 'pending_approval';
-                    $isWaitlistAvailable = $isWaitlistEnabled; // Waitlist available since cart item hasn't been fully confirmed
+                        // Get customer information
+                        $bookingEffectiveUser = $associatedBooking->bookingForUser ?? $associatedBooking->user;
+                        $bookingDisplayName = $associatedBooking->booking_for_user_name
+                            ?? $associatedBooking->admin_notes
+                            ?? ($bookingEffectiveUser ? $bookingEffectiveUser->name : null);
+                        $bookingCreatedByUser = $associatedBooking->user;
+                        $isBookingAdminBooking = $bookingCreatedByUser && in_array($bookingCreatedByUser->role, ['admin', 'staff']);
 
-                    $availableSlots[] = [
-                        'start' => $currentTime->format('H:i'),
-                        'end' => $slotEnd->format('H:i'),
-                        'start_time' => $currentTime->format('Y-m-d H:i:s'),
-                        'end_time' => $slotEnd->format('Y-m-d H:i:s'),
-                        'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
-                        'duration_hours' => 1,
-                        'price' => $cartItemPrice,
-                        'available' => false,
-                        'is_booked' => false, // Cart items are not yet booked
-                        'is_pending_approval' => true, // Cart items are always pending
-                        'is_waitlist_available' => $isWaitlistAvailable,
-                        'is_unpaid' => true, // Cart items are always unpaid
-                        'booking_id' => null, // No booking ID yet for cart items
-                        'type' => $cartDisplayType,
-                        'status' => 'pending',
-                        'payment_status' => $cartTransaction->payment_status ?? 'unpaid',
-                        // Customer information
-                        'display_name' => $conflictingCartItem->booking_for_user_name ?? ($cartUser ? $cartUser->name : 'Unknown'),
-                        'booking_for_user_name' => $conflictingCartItem->booking_for_user_name,
-                        'admin_notes' => $conflictingCartItem->admin_notes,
-                        'user_name' => $cartUser->name ?? null,
-                        'user_email' => $cartUser->email ?? null,
-                        'user_phone' => $cartUser->phone ?? null,
-                        'effective_user' => $cartUser ? [
-                            'id' => $cartUser->id,
-                            'name' => $cartUser->name,
-                            'email' => $cartUser->email,
-                            'phone' => $cartUser->phone ?? null
-                        ] : null,
-                        // Admin booking information
-                        'is_admin_booking' => $isCartAdminBooking,
-                        'created_by' => $cartUser ? [
-                            'id' => $cartUser->id,
-                            'name' => $cartUser->name,
-                            'role' => $cartUser->role
-                        ] : null,
-                        // Additional info - use cart item's times
-                        'full_booking_start' => Carbon::parse($conflictingCartItem->start_time)->format('H:i'),
-                        'full_booking_end' => Carbon::parse($conflictingCartItem->end_time)->format('H:i'),
-                        'full_booking_duration' => Carbon::parse($conflictingCartItem->end_time)->diffInHours(Carbon::parse($conflictingCartItem->start_time))
-                    ];
+                        // Check if waitlist feature is enabled
+                        $isWaitlistEnabled = WaitlistHelper::isWaitlistEnabled();
+
+                        // Determine display type
+                        $bookingDisplayType = 'waitlist_available';
+                        if (($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) {
+                            $bookingDisplayType = 'booking';
+                        } elseif (!$isBookingApproved && $isBookingPaid) {
+                            $bookingDisplayType = 'pending_approval';
+                        }
+
+                        // Calculate if waitlist is available
+                        $isWaitlistAvailable = !(($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking) && $isWaitlistEnabled;
+
+                        $availableSlots[] = [
+                            'start' => $currentTime->format('H:i'),
+                            'end' => $slotEnd->format('H:i'),
+                            'start_time' => $currentTime->format('Y-m-d H:i:s'),
+                            'end_time' => $slotEnd->format('Y-m-d H:i:s'),
+                            'formatted_time' => $currentTime->format('H:i') . ' - ' . $slotEnd->format('H:i'),
+                            'duration_hours' => 1,
+                            'price' => $cartItemPrice,
+                            'available' => false,
+                            'is_booked' => ($isBookingApproved && $isBookingPaid) || $isBookingAdminBooking,
+                            'is_pending_approval' => !$isBookingApproved && $isBookingPaid && !$isBookingAdminBooking,
+                            'is_waitlist_available' => $isWaitlistAvailable,
+                            'is_unpaid' => !$isBookingPaid,
+                            'booking_id' => $associatedBooking->id,
+                            'type' => $bookingDisplayType,
+                            'status' => $bookingStatus,
+                            'payment_status' => $bookingPaymentStatus,
+                            // Customer information
+                            'display_name' => $bookingDisplayName,
+                            'booking_for_user_name' => $associatedBooking->booking_for_user_name,
+                            'admin_notes' => $associatedBooking->admin_notes,
+                            'user_name' => $associatedBooking->user->name ?? null,
+                            'user_email' => $bookingEffectiveUser->email ?? null,
+                            'user_phone' => $bookingEffectiveUser->phone ?? null,
+                            'effective_user' => $bookingEffectiveUser ? [
+                                'id' => $bookingEffectiveUser->id,
+                                'name' => $bookingEffectiveUser->name,
+                                'email' => $bookingEffectiveUser->email,
+                                'phone' => $bookingEffectiveUser->phone ?? null
+                            ] : null,
+                            // Admin booking information
+                            'is_admin_booking' => $isBookingAdminBooking,
+                            'created_by' => $bookingCreatedByUser ? [
+                                'id' => $bookingCreatedByUser->id,
+                                'name' => $bookingCreatedByUser->name,
+                                'role' => $bookingCreatedByUser->role
+                            ] : null,
+                            // Additional info - use cart item's times
+                            'full_booking_start' => Carbon::parse($conflictingCartItem->start_time)->format('H:i'),
+                            'full_booking_end' => Carbon::parse($conflictingCartItem->end_time)->format('H:i'),
+                            'full_booking_duration' => Carbon::parse($conflictingCartItem->end_time)->diffInHours(Carbon::parse($conflictingCartItem->start_time))
+                        ];
+                    }
                 }
             }
 
