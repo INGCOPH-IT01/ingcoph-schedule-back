@@ -723,6 +723,9 @@ class CartTransactionController extends Controller
                         'attendance_status' => 'showed_up'
                     ]);
 
+                    // Bulk update all cart items to 'completed' status for data consistency
+                    $transaction->cartItems()->update(['status' => 'completed']);
+
                     // Commit all changes atomically
                     DB::commit();
 
