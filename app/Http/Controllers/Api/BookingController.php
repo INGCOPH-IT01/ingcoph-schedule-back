@@ -779,8 +779,10 @@ class BookingController extends Controller
                 $conflictingCartItem = CartItem::where('court_id', $courtId)
                     ->where('status', 'pending')
                     ->whereHas('cartTransaction', function($query) {
-                        // Only check cart items whose transaction has created bookings
-                        $query->whereHas('bookings');
+                        // Only check cart items whose transaction has active bookings (not cancelled/rejected)
+                        $query->whereHas('bookings', function($bookingQuery) {
+                            $bookingQuery->whereIn('status', ['pending', 'approved', 'completed', 'checked_in']);
+                        });
                     })
                     ->where(function ($query) use ($slotStartDateTime, $slotEndDateTime) {
                         // Use full datetime comparison for accuracy (DATE() extracts date from datetime column)
