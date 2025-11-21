@@ -17,7 +17,8 @@ class SportTimeBasedPricing extends Model
         'price_per_hour',
         'days_of_week',
         'is_active',
-        'priority'
+        'priority',
+        'effective_date'
     ];
 
     protected $casts = [
@@ -25,6 +26,7 @@ class SportTimeBasedPricing extends Model
         'is_active' => 'boolean',
         'days_of_week' => 'array',
         'priority' => 'integer',
+        'effective_date' => 'datetime',
     ];
 
     public function sport(): BelongsTo

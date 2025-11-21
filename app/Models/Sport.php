@@ -45,6 +45,12 @@ class Sport extends Model
         return $this->hasMany(SportTimeBasedPricing::class);
     }
 
+    // Price history relationship
+    public function priceHistory(): HasMany
+    {
+        return $this->hasMany(SportPriceHistory::class);
+    }
+
     /**
      * Get the lowest price per hour from time-based pricing or default price
      *
@@ -52,9 +58,15 @@ class Sport extends Model
      */
     public function getLowestPricePerHourAttribute(): float
     {
-        // Get all active time-based pricing rules
+        $now = Carbon::now();
+
+        // Get all active time-based pricing rules that are currently effective
         $activeTimeBasedPrices = $this->timeBasedPricing()
             ->where('is_active', true)
+            ->where(function ($query) use ($now) {
+                $query->whereNull('effective_date')
+                      ->orWhere('effective_date', '<=', $now);
+            })
             ->pluck('price_per_hour')
             ->toArray();
 
@@ -92,6 +104,11 @@ class Sport extends Model
 
         // Find the first matching rule with highest priority
         foreach ($pricingRules as $rule) {
+            // Check if the rule has become effective yet
+            if ($rule->effective_date !== null && $dateTime->lt($rule->effective_date)) {
+                continue; // Skip this rule if its effective date hasn't been reached
+            }
+
             // Check if the rule applies to this day of week
             $daysOfWeek = $rule->days_of_week;
 

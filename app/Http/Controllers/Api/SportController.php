@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Sport;
 use App\Models\SportTimeBasedPricing;
+use App\Models\SportPriceHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class SportController extends Controller
 {
@@ -149,6 +151,10 @@ class SportController extends Controller
             ], 422);
         }
 
+        // Check if default price changed
+        $oldPrice = $sport->price_per_hour;
+        $newPrice = $request->price_per_hour;
+
         $sport->update([
             'name' => $request->name,
             'description' => $request->description,
@@ -157,6 +163,18 @@ class SportController extends Controller
             'price_per_hour' => $request->price_per_hour,
             'is_active' => $request->is_active ?? $sport->is_active
         ]);
+
+        // Log if default price changed
+        if ($oldPrice != $newPrice) {
+            $this->logPriceChange(
+                $id,
+                'default_price_updated',
+                ['price_per_hour' => $oldPrice],
+                ['price_per_hour' => $newPrice],
+                now()->toDateTimeString(),
+                "Updated default price from ₱{$oldPrice}/hr to ₱{$newPrice}/hr"
+            );
+        }
 
         return response()->json([
             'success' => true,
@@ -242,7 +260,8 @@ class SportController extends Controller
             'days_of_week' => 'nullable|array',
             'days_of_week.*' => 'integer|min:0|max:6',
             'is_active' => 'boolean',
-            'priority' => 'nullable|integer'
+            'priority' => 'nullable|integer',
+            'effective_date' => 'nullable|date'
         ]);
 
         if ($validator->fails()) {
@@ -261,8 +280,19 @@ class SportController extends Controller
             'price_per_hour' => $request->price_per_hour,
             'days_of_week' => $request->days_of_week,
             'is_active' => $request->is_active ?? true,
-            'priority' => $request->priority ?? 0
+            'priority' => $request->priority ?? 0,
+            'effective_date' => $request->effective_date
         ]);
+
+        // Log the price change
+        $this->logPriceChange(
+            $sportId,
+            'time_based_pricing_created',
+            null,
+            $pricing->toArray(),
+            $request->effective_date,
+            "Created time-based pricing rule '{$request->name}' with price ₱{$request->price_per_hour}/hr"
+        );
 
         return response()->json([
             'success' => true,
@@ -302,7 +332,8 @@ class SportController extends Controller
             'days_of_week' => 'nullable|array',
             'days_of_week.*' => 'integer|min:0|max:6',
             'is_active' => 'boolean',
-            'priority' => 'nullable|integer'
+            'priority' => 'nullable|integer',
+            'effective_date' => 'nullable|date'
         ]);
 
         if ($validator->fails()) {
@@ -313,6 +344,9 @@ class SportController extends Controller
             ], 422);
         }
 
+        // Store old values for history
+        $oldValues = $pricing->toArray();
+
         $pricing->update([
             'name' => $request->name,
             'start_time' => $request->start_time,
@@ -320,8 +354,19 @@ class SportController extends Controller
             'price_per_hour' => $request->price_per_hour,
             'days_of_week' => $request->days_of_week,
             'is_active' => $request->is_active ?? $pricing->is_active,
-            'priority' => $request->priority ?? $pricing->priority
+            'priority' => $request->priority ?? $pricing->priority,
+            'effective_date' => $request->effective_date ?? $pricing->effective_date
         ]);
+
+        // Log the price change
+        $this->logPriceChange(
+            $sportId,
+            'time_based_pricing_updated',
+            $oldValues,
+            $pricing->fresh()->toArray(),
+            $request->effective_date ?? $pricing->effective_date,
+            "Updated time-based pricing rule '{$request->name}' with price ₱{$request->price_per_hour}/hr"
+        );
 
         return response()->json([
             'success' => true,
@@ -353,11 +398,71 @@ class SportController extends Controller
             ], 404);
         }
 
+        // Store old values for history
+        $oldValues = $pricing->toArray();
+
+        // Log the price change
+        $this->logPriceChange(
+            $sportId,
+            'time_based_pricing_deleted',
+            $oldValues,
+            null,
+            null,
+            "Deleted time-based pricing rule '{$pricing->name}' (₱{$pricing->price_per_hour}/hr)"
+        );
+
         $pricing->delete();
 
         return response()->json([
             'success' => true,
             'message' => 'Time-based pricing deleted successfully'
+        ]);
+    }
+
+    /**
+     * Get price change history for a sport
+     */
+    public function getPriceHistory(string $sportId)
+    {
+        $sport = Sport::find($sportId);
+
+        if (!$sport) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sport not found'
+            ], 404);
+        }
+
+        $history = SportPriceHistory::where('sport_id', $sportId)
+            ->with('changedBy:id,first_name,last_name,email')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $history
+        ]);
+    }
+
+    /**
+     * Helper method to log price changes
+     */
+    private function logPriceChange(
+        int $sportId,
+        string $changeType,
+        ?array $oldValue,
+        ?array $newValue,
+        ?string $effectiveDate,
+        string $description
+    ) {
+        SportPriceHistory::create([
+            'sport_id' => $sportId,
+            'change_type' => $changeType,
+            'changed_by' => Auth::id(),
+            'old_value' => $oldValue,
+            'new_value' => $newValue,
+            'effective_date' => $effectiveDate,
+            'description' => $description
         ]);
     }
 }

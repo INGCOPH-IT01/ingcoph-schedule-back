@@ -63,6 +63,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/sports/{sportId}/time-based-pricing', [SportController::class, 'storeTimeBasedPricing']);
         Route::put('/sports/{sportId}/time-based-pricing/{pricingId}', [SportController::class, 'updateTimeBasedPricing']);
         Route::delete('/sports/{sportId}/time-based-pricing/{pricingId}', [SportController::class, 'deleteTimeBasedPricing']);
+
+        // Price history routes
+        Route::get('/sports/{sportId}/price-history', [SportController::class, 'getPriceHistory']);
     });
 
     // Court management (admin and staff)
