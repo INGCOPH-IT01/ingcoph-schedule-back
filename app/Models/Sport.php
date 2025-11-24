@@ -129,12 +129,80 @@ class Sport extends Model
 
     /**
      * Calculate total price for a time range
+     * Handles pricing changes that occur within the booking period
      *
      * @param Carbon $startTime
      * @param Carbon $endTime
      * @return float
      */
     public function calculatePriceForRange(Carbon $startTime, Carbon $endTime): float
+    {
+        $totalPrice = 0;
+        $currentTime = $startTime->copy();
+
+        // Get all effectivity dates that fall within this booking range
+        $effectivityTransitions = $this->getEffectivityTransitions($startTime, $endTime);
+
+        // If there are effectivity transitions, we need to split the calculation at those points
+        if (!empty($effectivityTransitions)) {
+            foreach ($effectivityTransitions as $transitionTime) {
+                // Calculate price from current time to transition point
+                if ($currentTime->lt($transitionTime)) {
+                    $totalPrice += $this->calculatePriceForSegment($currentTime, $transitionTime);
+                    $currentTime = $transitionTime->copy();
+                }
+            }
+        }
+
+        // Calculate remaining time (from last transition to end, or full range if no transitions)
+        if ($currentTime->lt($endTime)) {
+            $totalPrice += $this->calculatePriceForSegment($currentTime, $endTime);
+        }
+
+        return round($totalPrice, 2);
+    }
+
+    /**
+     * Get all effectivity date transitions that occur within a time range
+     *
+     * @param Carbon $startTime
+     * @param Carbon $endTime
+     * @return array Array of Carbon objects representing transition times
+     */
+    private function getEffectivityTransitions(Carbon $startTime, Carbon $endTime): array
+    {
+        $transitions = [];
+
+        $pricingRules = $this->timeBasedPricing()
+            ->where('is_active', true)
+            ->whereNotNull('effective_date')
+            ->get();
+
+        foreach ($pricingRules as $rule) {
+            $effectiveDate = Carbon::parse($rule->effective_date);
+
+            // Check if this effective date falls within our booking range
+            if ($effectiveDate->gt($startTime) && $effectiveDate->lt($endTime)) {
+                $transitions[] = $effectiveDate;
+            }
+        }
+
+        // Sort transitions chronologically
+        usort($transitions, function($a, $b) {
+            return $a->timestamp <=> $b->timestamp;
+        });
+
+        return $transitions;
+    }
+
+    /**
+     * Calculate price for a continuous segment (no effectivity transitions)
+     *
+     * @param Carbon $startTime
+     * @param Carbon $endTime
+     * @return float
+     */
+    private function calculatePriceForSegment(Carbon $startTime, Carbon $endTime): float
     {
         $totalPrice = 0;
         $currentTime = $startTime->copy();
@@ -155,6 +223,6 @@ class Sport extends Model
             $currentTime = $nextHour;
         }
 
-        return round($totalPrice, 2);
+        return $totalPrice;
     }
 }
