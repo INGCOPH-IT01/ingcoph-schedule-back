@@ -105,8 +105,16 @@ class Sport extends Model
         // Find the first matching rule with highest priority
         foreach ($pricingRules as $rule) {
             // Check if the rule has become effective yet
-            if ($rule->effective_date !== null && $dateTime->lt($rule->effective_date)) {
-                continue; // Skip this rule if its effective date hasn't been reached
+            if ($rule->effective_date !== null) {
+                // Ensure we have a Carbon instance
+                $effectiveDate = $rule->effective_date instanceof Carbon
+                    ? $rule->effective_date
+                    : Carbon::parse($rule->effective_date);
+
+                // Skip if booking date is before effective date
+                if ($dateTime->timestamp < $effectiveDate->timestamp) {
+                    continue; // Skip this rule if its effective date hasn't been reached
+                }
             }
 
             // Check if the rule applies to this day of week
