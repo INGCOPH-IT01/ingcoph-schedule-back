@@ -143,6 +143,48 @@ class CartController extends Controller
                     ], 422);
                 }
             }
+
+            // Check if any dates are blocked for regular users
+            $blockedDatesJson = \App\Models\CompanySetting::get('blocked_booking_dates');
+            if ($blockedDatesJson) {
+                $blockedDates = json_decode($blockedDatesJson, true);
+                if (is_array($blockedDates)) {
+                    foreach ($request->items as $item) {
+                        $bookingDate = \Carbon\Carbon::parse($item['booking_date']);
+
+                        foreach ($blockedDates as $blockedRange) {
+                            $blockStart = \Carbon\Carbon::parse($blockedRange['start_date'])->startOfDay();
+
+                            // If end_date is null/empty, it means "from start_date onwards" (indefinite)
+                            $isIndefinite = empty($blockedRange['end_date']);
+                            $blockEnd = $isIndefinite ? null : \Carbon\Carbon::parse($blockedRange['end_date'])->endOfDay();
+
+                            // Check if booking date falls in blocked range
+                            $isBlocked = false;
+                            if ($isIndefinite) {
+                                // Block from start_date onwards
+                                $isBlocked = $bookingDate->greaterThanOrEqualTo($blockStart);
+                            } else {
+                                // Block specific date range
+                                $isBlocked = $bookingDate->between($blockStart, $blockEnd);
+                            }
+
+                            if ($isBlocked) {
+                                $reason = isset($blockedRange['reason']) && !empty($blockedRange['reason'])
+                                    ? $blockedRange['reason']
+                                    : 'This date range is blocked for booking';
+
+                                return response()->json([
+                                    'message' => $reason,
+                                    'errors' => [
+                                        'booking_date' => ['One or more selected dates are blocked for booking']
+                                    ]
+                                ], 422);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         try {
