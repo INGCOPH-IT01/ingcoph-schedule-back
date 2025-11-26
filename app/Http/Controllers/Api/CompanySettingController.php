@@ -322,6 +322,9 @@ class CompanySettingController extends Controller
 
                 // Store as JSON string
                 CompanySetting::set('blocked_booking_dates', json_encode($blockedDates ?: []));
+
+                // Clear backend cache for blocked_booking_dates
+                \App\Helpers\CachedSettings::flush('blocked_booking_dates');
             }
 
             // Save background color settings
