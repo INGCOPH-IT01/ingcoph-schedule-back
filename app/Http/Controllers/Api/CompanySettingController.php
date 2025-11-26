@@ -316,14 +316,32 @@ class CompanySettingController extends Controller
             if ($request->has('waitlist_enabled')) {
                 CompanySetting::set('waitlist_enabled', $request->waitlist_enabled ? '1' : '0');
             }
-            if ($request->has('blocked_booking_dates')) {
+            // Use isset() instead of has() to handle empty arrays properly
+            if (isset($request->blocked_booking_dates) || $request->has('blocked_booking_dates')) {
+                // Log what we're receiving for debugging
+                \Log::info('Updating blocked booking dates', [
+                    'received' => $request->blocked_booking_dates,
+                    'type' => gettype($request->blocked_booking_dates)
+                ]);
+
                 // Validate and sanitize the blocked dates
                 $blockedDates = is_string($request->blocked_booking_dates)
                     ? json_decode($request->blocked_booking_dates, true)
                     : $request->blocked_booking_dates;
 
-                // Store as JSON string
-                CompanySetting::set('blocked_booking_dates', json_encode($blockedDates ?: []));
+                // Ensure it's an array (empty array if null/invalid)
+                if (!is_array($blockedDates)) {
+                    $blockedDates = [];
+                }
+
+                // Store as JSON string (even if empty array)
+                $jsonString = json_encode($blockedDates);
+                CompanySetting::set('blocked_booking_dates', $jsonString);
+
+                \Log::info('Saved blocked booking dates', [
+                    'saved' => $jsonString,
+                    'count' => count($blockedDates)
+                ]);
 
                 // Clear all possible caches for company settings to ensure fresh data everywhere
                 \App\Helpers\CachedSettings::flush('blocked_booking_dates');
