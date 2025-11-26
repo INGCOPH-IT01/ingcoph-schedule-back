@@ -6,8 +6,10 @@ After deleting a blocked booking date in company settings, regular users were st
 ## Root Cause
 When blocked booking dates were updated or deleted:
 1. **Backend**: No cache invalidation was happening in `CompanySettingController`
-2. **Frontend**: While the admin's browser cache was cleared, regular users retained cached settings for up to 5 minutes (cache TTL)
-3. **UI State**: Even after cache clearing, users with the booking dialog already open wouldn't see updates until they changed the selected date
+2. **Frontend API Cache**: While the admin's browser cache was cleared, regular users retained cached settings for up to 5 minutes (cache TTL)
+3. **Frontend Components**: Booking dialogs were calling `getSettings()` without bypassing cache, so they always loaded stale data
+4. **HTTP Caching**: No cache-control headers were set, allowing browsers to cache the API response
+5. **UI State**: Even after cache clearing, users with the booking dialog already open wouldn't see updates until they changed the selected date
 
 ## Solution Implemented
 
@@ -47,9 +49,26 @@ if ($request->has('blocked_booking_dates')) {
 **File**: `app/Http/Controllers/Api/CompanySettingController.php`
 **Line**: ~324
 
-### Frontend Fix (companySettingService.js)
+#### 2. Prevent HTTP Caching
+Added HTTP cache-control headers to the `index()` method to prevent browser caching:
 
-#### 1. Always Fetch Fresh Blocked Dates
+```php
+return response()->json([
+    'success' => true,
+    'data' => $settings
+])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+  ->header('Pragma', 'no-cache')
+  ->header('Expires', '0');
+```
+
+**Rationale**: Without these headers, browsers could cache the API response, causing users to see stale data even when the application layer cache is cleared.
+
+**File**: `app/Http/Controllers/Api/CompanySettingController.php`
+**Line**: ~160
+
+### Frontend Fixes
+
+#### 1. companySettingService.js - Always Fetch Fresh Blocked Dates
 Modified `getBlockedBookingDates()` to always bypass cache:
 
 ```javascript
@@ -69,7 +88,9 @@ async getBlockedBookingDates() {
 - Prevent users from booking available dates
 - Allow bookings on dates that should be blocked
 
-#### 2. Clear Cache After Successful Update
+**File**: `src/services/companySettingService.js`
+
+#### 2. companySettingService.js - Clear Cache After Update
 Modified `updateSettings()` to clear cache both before AND after update:
 
 ```javascript
@@ -92,7 +113,46 @@ async updateSettings(settingsData) {
 
 **File**: `src/services/companySettingService.js`
 
-#### 3. Real-time Updates in Booking Dialogs
+#### 3. NewBookingDialog.vue - Bypass Cache When Loading
+**CRITICAL FIX**: Changed all `getSettings()` calls to `getSettings(false)`:
+
+```javascript
+// Before (WRONG - uses cache):
+const settings = await companySettingService.getSettings()
+
+// After (CORRECT - bypasses cache):
+const settings = await companySettingService.getSettings(false)
+```
+
+**Locations fixed**:
+- `fetchWaitlistConfig()` function
+- Dialog opening (watch for `isOpen` prop)
+- Dialog mounting (onMounted hook)
+
+**File**: `src/components/NewBookingDialog.vue`
+
+#### 4. GlobalBookingDialog.vue - Bypass Cache When Loading
+Same fix as NewBookingDialog - changed `getSettings()` to `getSettings(false)` when loading blocked dates.
+
+**File**: `src/components/GlobalBookingDialog.vue`
+
+#### 5. CompanySettings.vue - Bypass Cache When Loading
+Changed `loadSettings()` to bypass cache:
+
+```javascript
+const loadSettings = async () => {
+  try {
+    loading.value = true
+    // Always fetch fresh settings (bypass cache) when loading the settings page
+    const settings = await companySettingService.getSettings(false)
+    // ...
+  }
+}
+```
+
+**File**: `src/views/CompanySettings.vue`
+
+#### 6. Real-time Updates in Booking Dialogs
 Added event listeners to re-check blocked dates when settings are updated:
 
 **NewBookingDialog.vue**:
@@ -108,8 +168,8 @@ const recheckBlockedDates = async () => {
 
 // Handler for company settings updated event
 const handleCompanySettingsUpdated = async () => {
-  await fetchWaitlistConfig()
-  await recheckBlockedDates()
+  await fetchWaitlistConfig()  // Also refreshes with getSettings(false)
+  await recheckBlockedDates()  // Re-validates current date
 }
 
 // Listen for event
@@ -121,7 +181,10 @@ window.addEventListener('company-settings-updated', handleCompanySettingsUpdated
 - Listens for 'company-settings-updated' events
 - Automatically re-checks blocked dates when settings change
 
-**Rationale**: When an admin updates blocked dates in the Company Settings page, the event is dispatched to all open dialogs, which immediately re-check and update their blocked date status.
+**Rationale**: When an admin updates blocked dates in the Company Settings page, the event is dispatched to all open dialogs, which immediately:
+1. Re-fetch fresh settings (bypassing cache)
+2. Re-check if the currently selected date is blocked
+3. Update the UI to show/hide blocked date alerts
 
 **Files Modified**:
 - `src/components/NewBookingDialog.vue`
@@ -207,11 +270,26 @@ These files check blocked dates but didn't need changes:
 - `app/Http/Controllers/Api/RecurringScheduleController.php` (line 95)
 
 ## Summary of Changes
-1. ✅ Backend clears all cache layers when blocked dates are updated
-2. ✅ Frontend always fetches fresh data for blocked dates validation
-3. ✅ Frontend re-checks blocked dates when settings update event is fired
-4. ✅ Changes take effect immediately without browser refresh
-5. ✅ Real-time updates in open booking dialogs
+
+### Backend
+1. ✅ Clear all cache layers when blocked dates are updated (CachedSettings, Laravel Cache, Tagged Cache)
+2. ✅ Add HTTP cache-control headers to prevent browser-level caching of settings endpoint
+
+### Frontend Service Layer
+3. ✅ `getBlockedBookingDates()` always bypasses cache (passes `false` to `getSettings`)
+4. ✅ `updateSettings()` clears cache both before and after update
+
+### Frontend Components
+5. ✅ **NewBookingDialog.vue**: All `getSettings()` calls changed to `getSettings(false)`
+6. ✅ **GlobalBookingDialog.vue**: All `getSettings()` calls changed to `getSettings(false)`
+7. ✅ **CompanySettings.vue**: `loadSettings()` changed to use `getSettings(false)`
+8. ✅ Both booking dialogs listen for 'company-settings-updated' events and re-check blocked dates in real-time
+
+### Result
+- Changes take effect **immediately** for all users
+- No browser refresh needed
+- Real-time updates even in already-open booking dialogs
+- No stale cache at any layer (application, HTTP, or browser)
 
 ## Date Fixed
 November 26, 2025
