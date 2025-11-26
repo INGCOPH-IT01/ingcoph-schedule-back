@@ -323,8 +323,18 @@ class CompanySettingController extends Controller
                 // Store as JSON string
                 CompanySetting::set('blocked_booking_dates', json_encode($blockedDates ?: []));
 
-                // Clear backend cache for blocked_booking_dates
+                // Clear all possible caches for company settings to ensure fresh data everywhere
                 \App\Helpers\CachedSettings::flush('blocked_booking_dates');
+                \Illuminate\Support\Facades\Cache::forget('company_setting:blocked_booking_dates');
+
+                // Clear tagged cache if supported by the cache driver
+                try {
+                    if (method_exists(\Illuminate\Support\Facades\Cache::getStore(), 'tags')) {
+                        \Illuminate\Support\Facades\Cache::tags(['company_settings'])->flush();
+                    }
+                } catch (\Exception $e) {
+                    // Cache tags not supported, ignore silently
+                }
             }
 
             // Save background color settings
