@@ -7,11 +7,12 @@ After deleting a blocked booking date in company settings, regular users were st
 When blocked booking dates were updated or deleted:
 1. **Backend**: No cache invalidation was happening in `CompanySettingController`
 2. **Frontend**: While the admin's browser cache was cleared, regular users retained cached settings for up to 5 minutes (cache TTL)
+3. **UI State**: Even after cache clearing, users with the booking dialog already open wouldn't see updates until they changed the selected date
 
 ## Solution Implemented
 
 ### Backend Fix (CompanySettingController.php)
-Added cache invalidation when `blocked_booking_dates` are updated:
+Added comprehensive cache invalidation when `blocked_booking_dates` are updated:
 
 ```php
 if ($request->has('blocked_booking_dates')) {
@@ -23,10 +24,25 @@ if ($request->has('blocked_booking_dates')) {
     // Store as JSON string
     CompanySetting::set('blocked_booking_dates', json_encode($blockedDates ?: []));
 
-    // Clear backend cache for blocked_booking_dates
+    // Clear all possible caches for company settings to ensure fresh data everywhere
     \App\Helpers\CachedSettings::flush('blocked_booking_dates');
+    \Illuminate\Support\Facades\Cache::forget('company_setting:blocked_booking_dates');
+
+    // Clear tagged cache if supported by the cache driver
+    try {
+        if (method_exists(\Illuminate\Support\Facades\Cache::getStore(), 'tags')) {
+            \Illuminate\Support\Facades\Cache::tags(['company_settings'])->flush();
+        }
+    } catch (\Exception $e) {
+        // Cache tags not supported, ignore silently
+    }
 }
 ```
+
+**Changes Made**:
+1. Flush CachedSettings helper cache
+2. Forget direct cache key
+3. Flush tagged cache (if supported by cache driver)
 
 **File**: `app/Http/Controllers/Api/CompanySettingController.php`
 **Line**: ~324
@@ -76,6 +92,41 @@ async updateSettings(settingsData) {
 
 **File**: `src/services/companySettingService.js`
 
+#### 3. Real-time Updates in Booking Dialogs
+Added event listeners to re-check blocked dates when settings are updated:
+
+**NewBookingDialog.vue**:
+```javascript
+// Re-check if currently selected date is blocked (called when settings are updated)
+const recheckBlockedDates = async () => {
+  if (selectedDate.value && currentUser.value) {
+    const result = await companySettingService.isDateBlocked(selectedDate.value, currentUser.value.role)
+    selectedDateBlockInfo.value = result
+    console.log('Rechecked blocked dates for:', selectedDate.value, result)
+  }
+}
+
+// Handler for company settings updated event
+const handleCompanySettingsUpdated = async () => {
+  await fetchWaitlistConfig()
+  await recheckBlockedDates()
+}
+
+// Listen for event
+window.addEventListener('company-settings-updated', handleCompanySettingsUpdated)
+```
+
+**GlobalBookingDialog.vue**:
+- Added similar functionality for the admin booking dialog
+- Listens for 'company-settings-updated' events
+- Automatically re-checks blocked dates when settings change
+
+**Rationale**: When an admin updates blocked dates in the Company Settings page, the event is dispatched to all open dialogs, which immediately re-check and update their blocked date status.
+
+**Files Modified**:
+- `src/components/NewBookingDialog.vue`
+- `src/components/GlobalBookingDialog.vue`
+
 ## Testing the Fix
 
 ### Test Case 1: Delete Blocked Date
@@ -105,10 +156,20 @@ async updateSettings(settingsData) {
 11. Try to book Jan 10 → Should **succeed** ✅
 12. Try to book Jan 25 → Should be **blocked** ✅
 
+### Test Case 3: Real-time Update (Same Browser)
+1. **Open two tabs** in the same browser
+2. Tab 1: **Login as Admin** → Open Company Settings
+3. Tab 2: **Login as Regular User** → Open New Booking Dialog → Select Jan 10, 2025
+4. Tab 1: **Add blocked date** (Jan 1-15, 2025) → Save
+5. Tab 2: **Check the booking dialog** → Should show "Date Not Available" alert **immediately** ✅
+6. Tab 1: **Delete the blocked date** → Save
+7. Tab 2: **Check the booking dialog** → Alert should disappear **immediately** ✅
+
 ### Expected Behavior
 - Changes to blocked dates should take effect **immediately** for all users
 - No need to wait for cache expiration (previously up to 5 minutes)
 - No need for users to refresh their browser
+- Real-time updates even in already-open booking dialogs
 
 ## Technical Details
 
@@ -127,17 +188,30 @@ async updateSettings(settingsData) {
   - The API call is fast
   - Data accuracy is critical for booking validation
 
-## Related Files
-- Backend:
-  - `app/Http/Controllers/Api/CompanySettingController.php`
-  - `app/Helpers/CachedSettings.php`
-- Frontend:
-  - `src/services/companySettingService.js`
-  - `src/views/CompanySettings.vue`
-- Validation Points:
-  - `app/Http/Controllers/Api/BookingController.php` (line 121)
-  - `app/Http/Controllers/Api/CartController.php` (line 148)
-  - `app/Http/Controllers/Api/RecurringScheduleController.php` (line 95)
+## Related Files Modified
+
+### Backend
+- `app/Http/Controllers/Api/CompanySettingController.php` - Added comprehensive cache clearing
+- `app/Helpers/CachedSettings.php` - Existing cache helper (used in fix)
+
+### Frontend
+- `src/services/companySettingService.js` - Always bypass cache for blocked dates, clear cache after update
+- `src/components/NewBookingDialog.vue` - Added real-time blocked dates refresh listener
+- `src/components/GlobalBookingDialog.vue` - Added real-time blocked dates refresh listener
+- `src/views/CompanySettings.vue` - Dispatches 'company-settings-updated' event (already existed)
+
+### Validation Points (Not Modified)
+These files check blocked dates but didn't need changes:
+- `app/Http/Controllers/Api/BookingController.php` (line 121)
+- `app/Http/Controllers/Api/CartController.php` (line 148)
+- `app/Http/Controllers/Api/RecurringScheduleController.php` (line 95)
+
+## Summary of Changes
+1. ✅ Backend clears all cache layers when blocked dates are updated
+2. ✅ Frontend always fetches fresh data for blocked dates validation
+3. ✅ Frontend re-checks blocked dates when settings update event is fired
+4. ✅ Changes take effect immediately without browser refresh
+5. ✅ Real-time updates in open booking dialogs
 
 ## Date Fixed
 November 26, 2025
