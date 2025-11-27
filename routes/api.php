@@ -31,6 +31,11 @@ use App\Http\Controllers\InventoryController;
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
+// Password reset routes
+Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetOtp']);
+Route::post('/verify-otp', [AuthController::class, 'verifyPasswordResetOtp']);
+Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
 // Public sport and court routes
 Route::get('/sports', [SportController::class, 'index']);
 Route::get('/sports/{id}', [SportController::class, 'show']);
