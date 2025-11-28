@@ -84,6 +84,13 @@ class CompanySettingController extends Controller
                 $settings['waitlist_enabled'] = $settings['waitlist_enabled'] === '1';
             }
 
+            // POS products feature setting
+            if (!isset($settings['pos_products_enabled'])) {
+                $settings['pos_products_enabled'] = true;
+            } else {
+                $settings['pos_products_enabled'] = $settings['pos_products_enabled'] === '1';
+            }
+
             // Blocked booking dates
             if (!isset($settings['blocked_booking_dates'])) {
                 $settings['blocked_booking_dates'] = [];
@@ -157,6 +164,23 @@ class CompanySettingController extends Controller
                 }
             }
 
+            // Terms and Conditions settings
+            if (!isset($settings['terms_and_conditions'])) {
+                $settings['terms_and_conditions'] = '';
+            }
+            if (!isset($settings['terms_enabled'])) {
+                $settings['terms_enabled'] = false;
+            } else {
+                $settings['terms_enabled'] = $settings['terms_enabled'] === '1';
+            }
+
+            // Reschedule window setting (in hours)
+            if (!isset($settings['reschedule_window_hours'])) {
+                $settings['reschedule_window_hours'] = 24; // Default to 24 hours
+            } else {
+                $settings['reschedule_window_hours'] = (int)$settings['reschedule_window_hours'];
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $settings
@@ -214,6 +238,7 @@ class CompanySettingController extends Controller
             // Booking rules
             'user_booking_enabled' => 'nullable|boolean',
             'waitlist_enabled' => 'nullable|boolean',
+            'pos_products_enabled' => 'nullable|boolean',
             'blocked_booking_dates' => 'nullable|json',
             // Payment settings
             'payment_gcash_number' => 'nullable|string|max:50',
@@ -253,6 +278,11 @@ class CompanySettingController extends Controller
             'operating_hours_friday_operational' => 'nullable|boolean',
             'operating_hours_saturday_operational' => 'nullable|boolean',
             'operating_hours_sunday_operational' => 'nullable|boolean',
+            // Terms and Conditions
+            'terms_and_conditions' => 'nullable|string',
+            'terms_enabled' => 'nullable|boolean',
+            // Reschedule window
+            'reschedule_window_hours' => 'nullable|integer|min:0|max:168',
         ]);
 
         if ($validator->fails()) {
@@ -315,6 +345,9 @@ class CompanySettingController extends Controller
             }
             if ($request->has('waitlist_enabled')) {
                 CompanySetting::set('waitlist_enabled', $request->waitlist_enabled ? '1' : '0');
+            }
+            if ($request->has('pos_products_enabled')) {
+                CompanySetting::set('pos_products_enabled', $request->pos_products_enabled ? '1' : '0');
             }
             if ($request->has('blocked_booking_dates')) {
                 // Validate and sanitize the blocked dates
@@ -413,6 +446,19 @@ class CompanySettingController extends Controller
                 }
             }
 
+            // Save terms and conditions
+            if ($request->has('terms_and_conditions')) {
+                CompanySetting::set('terms_and_conditions', $request->terms_and_conditions);
+            }
+            if ($request->has('terms_enabled')) {
+                CompanySetting::set('terms_enabled', $request->terms_enabled ? '1' : '0');
+            }
+
+            // Save reschedule window
+            if ($request->has('reschedule_window_hours')) {
+                CompanySetting::set('reschedule_window_hours', (string)$request->reschedule_window_hours);
+            }
+
             $responseData = [
                 'company_name' => $request->company_name,
                 'theme_primary_color' => CompanySetting::get('theme_primary_color', '#B71C1C'),
@@ -425,6 +471,7 @@ class CompanySettingController extends Controller
                 'dashboard_show_recent_bookings' => CompanySetting::get('dashboard_show_recent_bookings', '1') === '1',
                 'user_booking_enabled' => CompanySetting::get('user_booking_enabled', '1') === '1',
                 'waitlist_enabled' => CompanySetting::get('waitlist_enabled', '1') === '1',
+                'pos_products_enabled' => CompanySetting::get('pos_products_enabled', '1') === '1',
                 'blocked_booking_dates' => json_decode(CompanySetting::get('blocked_booking_dates', '[]'), true),
                 'bg_secondary_color' => CompanySetting::get('bg_secondary_color', '#FFEBEE'),
                 'bg_accent_color' => CompanySetting::get('bg_accent_color', '#FFCDD2'),
@@ -450,6 +497,13 @@ class CompanySettingController extends Controller
                 $responseData["operating_hours_{$day}_close"] = CompanySetting::get("operating_hours_{$day}_close", '22:00');
                 $responseData["operating_hours_{$day}_operational"] = CompanySetting::get("operating_hours_{$day}_operational", '1') === '1';
             }
+
+            // Add terms and conditions to response
+            $responseData['terms_and_conditions'] = CompanySetting::get('terms_and_conditions', '');
+            $responseData['terms_enabled'] = CompanySetting::get('terms_enabled', '0') === '1';
+
+            // Add reschedule window to response
+            $responseData['reschedule_window_hours'] = (int)CompanySetting::get('reschedule_window_hours', '24');
 
             $logoPath = CompanySetting::get('company_logo');
             if ($logoPath) {
