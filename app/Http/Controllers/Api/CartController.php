@@ -128,22 +128,6 @@ class CartController extends Controller
 
         // Check if user role is 'user' and all booking dates are within current month only
         if ($request->user()->role === 'user') {
-            $currentMonthStart = \Carbon\Carbon::now()->startOfMonth();
-            $currentMonthEnd = \Carbon\Carbon::now()->endOfMonth();
-
-            foreach ($request->items as $item) {
-                $bookingDate = \Carbon\Carbon::parse($item['booking_date']);
-
-                if ($bookingDate->lt($currentMonthStart) || $bookingDate->gt($currentMonthEnd)) {
-                    return response()->json([
-                        'message' => 'Regular users can only book time slots within the current month (' . $currentMonthStart->format('F Y') . ')',
-                        'errors' => [
-                            'booking_date' => ['All booking dates must be within the current month']
-                        ]
-                    ], 422);
-                }
-            }
-
             // Check if any dates are blocked for regular users
             $blockedDatesJson = \App\Models\CompanySetting::get('blocked_booking_dates');
             if ($blockedDatesJson) {
