@@ -15,11 +15,13 @@ class Holiday extends Model
         'name',
         'description',
         'is_recurring',
+        'no_business_operations',
     ];
 
     protected $casts = [
         'date' => 'date',
         'is_recurring' => 'boolean',
+        'no_business_operations' => 'boolean',
     ];
 
     /**
@@ -36,6 +38,30 @@ class Holiday extends Model
 
         // Check for recurring holidays (same month and day, different year)
         $recurringMatch = self::where('is_recurring', true)
+            ->whereMonth('date', $date->month)
+            ->whereDay('date', $date->day)
+            ->exists();
+
+        return $recurringMatch;
+    }
+
+    /**
+     * Check if a given date has no business operations
+     */
+    public static function hasNoBusinessOperations(Carbon $date): bool
+    {
+        // Check for exact date match with no_business_operations = true
+        $exactMatch = self::whereDate('date', $date->format('Y-m-d'))
+            ->where('no_business_operations', true)
+            ->exists();
+
+        if ($exactMatch) {
+            return true;
+        }
+
+        // Check for recurring holidays with no_business_operations = true
+        $recurringMatch = self::where('is_recurring', true)
+            ->where('no_business_operations', true)
             ->whereMonth('date', $date->month)
             ->whereDay('date', $date->day)
             ->exists();

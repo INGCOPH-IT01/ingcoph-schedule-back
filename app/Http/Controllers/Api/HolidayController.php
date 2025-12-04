@@ -48,7 +48,8 @@ class HolidayController extends Controller
             'date' => 'required|date',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'is_recurring' => 'nullable|boolean'
+            'is_recurring' => 'nullable|boolean',
+            'no_business_operations' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -64,7 +65,8 @@ class HolidayController extends Controller
                 'date' => $request->date,
                 'name' => $request->name,
                 'description' => $request->description,
-                'is_recurring' => $request->is_recurring ?? false
+                'is_recurring' => $request->is_recurring ?? false,
+                'no_business_operations' => $request->no_business_operations ?? false
             ]);
 
             return response()->json([
@@ -99,7 +101,8 @@ class HolidayController extends Controller
             'date' => 'required|date',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'is_recurring' => 'nullable|boolean'
+            'is_recurring' => 'nullable|boolean',
+            'no_business_operations' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -115,7 +118,8 @@ class HolidayController extends Controller
                 'date' => $request->date,
                 'name' => $request->name,
                 'description' => $request->description,
-                'is_recurring' => $request->is_recurring ?? false
+                'is_recurring' => $request->is_recurring ?? false,
+                'no_business_operations' => $request->no_business_operations ?? false
             ]);
 
             return response()->json([
