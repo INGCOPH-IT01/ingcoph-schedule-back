@@ -1347,63 +1347,72 @@ class BookingController extends Controller
     }
 
     /**
-     * Get booking statistics for admin dashboard
+     * Get booking statistics for admin dashboard - Optimized version
+     * Revenue data is restricted to admin users only
      */
     public function getStats()
     {
         // Get today's date
         $today = Carbon::today()->toDateString();
 
-        // Calculate total hours booked for today across all courts using CartItem
-        // 'completed' = checked out and booked
-        // 'pending' = temporarily in cart (we can include or exclude these)
-        $todayCartItems = \App\Models\CartItem::whereDate('booking_date', $today)
+        // Optimize queries using aggregation and raw SQL for performance
+
+        // Calculate total hours booked for today using a single query with aggregation
+        $todayHours = \App\Models\CartItem::whereDate('booking_date', $today)
             ->where('status', 'completed')
-            ->get();
+            ->selectRaw('
+                SUM(
+                    CASE
+                        WHEN TIME(end_time) <= TIME(start_time)
+                        THEN TIMESTAMPDIFF(HOUR,
+                            CONCAT(booking_date, " ", start_time),
+                            CONCAT(DATE_ADD(booking_date, INTERVAL 1 DAY), " ", end_time)
+                        )
+                        ELSE TIMESTAMPDIFF(HOUR,
+                            CONCAT(booking_date, " ", start_time),
+                            CONCAT(booking_date, " ", end_time)
+                        )
+                    END
+                ) as total_hours
+            ')
+            ->value('total_hours') ?? 0;
 
-        $totalHours = 0;
-        foreach ($todayCartItems as $item) {
-            // Parse times with the booking date to handle midnight crossings correctly
-            $bookingDate = Carbon::parse($item->booking_date);
-            $startTime = Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->start_time);
-            $endTime = Carbon::parse($bookingDate->format('Y-m-d') . ' ' . $item->end_time);
+        // Optimize transaction stats with single aggregation query
+        $transactionStats = \App\Models\CartTransaction::selectRaw('
+            COUNT(*) as total_bookings,
+            SUM(CASE WHEN approval_status = "pending" THEN 1 ELSE 0 END) as pending_bookings,
+            SUM(CASE WHEN approval_status IN ("approved", "paid") THEN 1 ELSE 0 END) as approved_bookings,
+            SUM(CASE WHEN approval_status = "rejected" THEN 1 ELSE 0 END) as rejected_bookings,
+            SUM(CASE WHEN status = "cancelled" THEN 1 ELSE 0 END) as cancelled_bookings,
+            SUM(CASE WHEN approval_status IN ("approved", "paid") THEN total_price ELSE 0 END) as total_revenue,
+            SUM(CASE WHEN approval_status = "pending" THEN total_price ELSE 0 END) as pending_revenue
+        ')
+        ->first();
 
-            // If end time is before or equal to start time, it crosses midnight (next day)
-            if ($endTime->lte($startTime)) {
-                $endTime->addDay();
-            }
-
-            $totalHours += $endTime->diffInHours($startTime, true); // true for floating point hours
-        }
-
-        // Calculate revenue from cart transactions
-        $totalRevenue = \App\Models\CartTransaction::whereIn('approval_status', ['approved', 'paid'])
-            ->sum('total_price');
-
-        $pendingRevenue = \App\Models\CartTransaction::where('approval_status', 'pending')
-            ->sum('total_price');
-
-        // Get transaction counts
-        $totalTransactions = \App\Models\CartTransaction::count();
-        $pendingTransactions = \App\Models\CartTransaction::where('approval_status', 'pending')->count();
-        $approvedTransactions = \App\Models\CartTransaction::whereIn('approval_status', ['approved', 'paid'])->count();
-        $rejectedTransactions = \App\Models\CartTransaction::where('approval_status', 'rejected')->count();
-
-        // Get total users count
+        // Get user count (simple query)
         $totalUsers = \App\Models\User::count();
 
+        // Get completed bookings count (distinct cart transactions with paid items)
+        $completedBookings = \App\Models\CartItem::where('status', 'paid')
+            ->distinct('cart_transaction_id')
+            ->count('cart_transaction_id');
+
         $stats = [
-            'total_bookings' => $totalTransactions,
-            'pending_bookings' => $pendingTransactions,
-            'approved_bookings' => $approvedTransactions,
-            'rejected_bookings' => $rejectedTransactions,
-            'cancelled_bookings' => \App\Models\CartTransaction::where('status', 'cancelled')->count(),
-            'completed_bookings' => \App\Models\CartItem::where('status', 'paid')->distinct('cart_transaction_id')->count(),
-            'total_revenue' => $totalRevenue ?? 0,
-            'pending_revenue' => $pendingRevenue ?? 0,
-            'total_hours' => round($totalHours, 2),
+            'total_bookings' => $transactionStats->total_bookings ?? 0,
+            'pending_bookings' => $transactionStats->pending_bookings ?? 0,
+            'approved_bookings' => $transactionStats->approved_bookings ?? 0,
+            'rejected_bookings' => $transactionStats->rejected_bookings ?? 0,
+            'cancelled_bookings' => $transactionStats->cancelled_bookings ?? 0,
+            'completed_bookings' => $completedBookings,
+            'total_hours' => round($todayHours, 2),
             'total_users' => $totalUsers
         ];
+
+        // Only admins can see revenue data
+        if (auth()->check() && auth()->user()->role === 'admin') {
+            $stats['total_revenue'] = round($transactionStats->total_revenue ?? 0, 2);
+            $stats['pending_revenue'] = round($transactionStats->pending_revenue ?? 0, 2);
+        }
 
         return response()->json([
             'success' => true,

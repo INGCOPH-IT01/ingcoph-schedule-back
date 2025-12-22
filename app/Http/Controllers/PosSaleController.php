@@ -345,9 +345,18 @@ class PosSaleController extends Controller
 
     /**
      * Get POS statistics.
+     * Only admin users can access revenue and profit data.
      */
     public function statistics(Request $request)
     {
+        // Only admins can see sales statistics
+        if (!auth()->check() || auth()->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. Only administrators can view sales statistics.',
+            ], 403);
+        }
+
         $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
         $dateTo = $request->get('date_to', now()->toDateString());
 
@@ -367,18 +376,13 @@ class PosSaleController extends Controller
             'refunded_sales' => $query->clone()->where('status', 'refunded')->count(),
         ];
 
-        // Only admins can see profit data
-        if (auth()->check() && auth()->user()->role === 'admin') {
-            $stats['total_profit'] = 0;
-
-            // Calculate profit
-            $completedSales = $query->clone()->completed()->with('saleItems')->get();
-            $totalProfit = 0;
-            foreach ($completedSales as $sale) {
-                $totalProfit += $sale->profit;
-            }
-            $stats['total_profit'] = $totalProfit;
+        // Calculate profit (admin only access confirmed above)
+        $completedSales = $query->clone()->completed()->with('saleItems')->get();
+        $totalProfit = 0;
+        foreach ($completedSales as $sale) {
+            $totalProfit += $sale->profit;
         }
+        $stats['total_profit'] = $totalProfit;
 
         return response()->json($stats);
     }
