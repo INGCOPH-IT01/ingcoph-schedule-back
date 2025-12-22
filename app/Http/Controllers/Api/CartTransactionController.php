@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 
 class CartTransactionController extends Controller
 {
@@ -60,56 +61,103 @@ class CartTransactionController extends Controller
     }
 
     /**
-     * Get all cart transactions (admin/staff only)
+     * Get all cart transactions (admin/staff only) - Optimized version
      */
     public function all(Request $request)
     {
-        $query = CartTransaction::with([
-                'user',
-                'cartItems' => function($query) {
-                    $query->where('status', '!=', 'cancelled')
-                          ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
-                },
-                'cartItems.court.sport',
-                'cartItems.sport',
-                'cartItems.court.images',
-                'cartItems.bookings',
-                'cartItems.bookingForUser',
-                'bookings',
-                'posSales.saleItems.product',
-                'approver',
-                'waitlistEntries' => function($query) {
-                    $query->orderBy('position', 'asc');
-                },
-                'waitlistEntries.user',
-                'waitlistEntries.bookingForUser'
-            ])
+        // Start building query with base filters
+        $query = CartTransaction::query()
             ->whereIn('status', ['pending', 'completed']);
-            // Removed ->whereHas('bookings') filter to show ALL transactions, including those with data integrity issues
-            // This allows admins to identify and fix transactions that have cart items but no bookings
+
+        // Apply server-side filters early to reduce dataset
+
+        // Filter by approval status
+        if ($request->filled('approval_status')) {
+            $approvalStatuses = is_array($request->approval_status)
+                ? $request->approval_status
+                : explode(',', $request->approval_status);
+
+            // Handle special 'pending_waitlist' filter
+            if (in_array('pending_waitlist', $approvalStatuses)) {
+                // Show transactions that have waitlist entries AND are not approved
+                $query->whereHas('waitlistEntries')
+                    ->where('approval_status', '!=', 'approved');
+            } else if (!empty($approvalStatuses)) {
+                $query->whereIn('approval_status', $approvalStatuses);
+            }
+        }
+
+        // Filter by payment status
+        if ($request->filled('payment_status')) {
+            $paymentStatuses = is_array($request->payment_status)
+                ? $request->payment_status
+                : explode(',', $request->payment_status);
+
+            foreach ($paymentStatuses as $status) {
+                if ($status === 'complete') {
+                    $query->where(function($q) {
+                        $q->whereNotNull('payment_method')
+                          ->where('payment_method', '!=', '')
+                          ->whereNotNull('proof_of_payment')
+                          ->where('proof_of_payment', '!=', '');
+                    });
+                } else if ($status === 'missing_proof') {
+                    $query->where(function($q) {
+                        $q->whereNull('proof_of_payment')
+                          ->orWhere('proof_of_payment', '');
+                    });
+                }
+            }
+        }
 
         // Filter by booking date range if provided
-        if ($request->filled('date_from')) {
+        if ($request->filled('date_from') || $request->filled('date_to')) {
             $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '>=', $request->date_from)
-                  ->where('status', '!=', 'cancelled')
-                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
+                $q->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id');
+
+                if ($request->filled('date_from')) {
+                    $q->where('booking_date', '>=', $request->date_from);
+                }
+
+                if ($request->filled('date_to')) {
+                    $q->where('booking_date', '<=', $request->date_to);
+                }
             });
         }
 
-        if ($request->filled('date_to')) {
-            $query->whereHas('cartItems', function($q) use ($request) {
-                $q->where('booking_date', '<=', $request->date_to)
-                  ->where('status', '!=', 'cancelled')
-                  ->whereNull('booking_waitlist_id'); // Filter out waitlist bookings
+        // Filter by sport
+        if ($request->filled('sport')) {
+            $query->whereHas('cartItems.sport', function($q) use ($request) {
+                $q->where('name', $request->sport);
+            });
+        }
+
+        // Filter by user (name, email, or admin notes)
+        if ($request->filled('user_search')) {
+            $searchTerm = $request->user_search;
+            $query->where(function($q) use ($searchTerm) {
+                // Search in transaction user
+                $q->whereHas('user', function($userQuery) use ($searchTerm) {
+                    $userQuery->where('name', 'like', "%{$searchTerm}%")
+                             ->orWhere('email', 'like', "%{$searchTerm}%");
+                })
+                // Search in booking_for_user
+                ->orWhereHas('cartItems.bookingForUser', function($bookingForQuery) use ($searchTerm) {
+                    $bookingForQuery->where('name', 'like', "%{$searchTerm}%")
+                                   ->orWhere('email', 'like', "%{$searchTerm}%");
+                })
+                // Search in booking_for_user_name (walk-in customers)
+                ->orWhereHas('cartItems', function($cartItemQuery) use ($searchTerm) {
+                    $cartItemQuery->where('booking_for_user_name', 'like', "%{$searchTerm}%")
+                                 ->orWhere('admin_notes', 'like', "%{$searchTerm}%");
+                });
             });
         }
 
         // Handle sorting
         $sortBy = $request->input('sort_by', 'created_at');
         $sortOrder = $request->input('sort_order', 'asc');
-
-        // Validate sort order
         $sortOrder = in_array(strtolower($sortOrder), ['asc', 'desc']) ? strtolower($sortOrder) : 'asc';
 
         // Apply sorting based on the field
@@ -124,21 +172,69 @@ class CartTransactionController extends Controller
                 $query->orderBy('total_price', $sortOrder);
                 break;
             case 'booking_date':
-                // For booking_date, we need to join with cart_items to sort
-                // We'll use a subquery to get the first cart item's booking_date (excluding cancelled)
                 $query->orderBy(
                     DB::raw('(SELECT booking_date FROM cart_items WHERE cart_items.cart_transaction_id = cart_transactions.id AND cart_items.status != \'cancelled\' ORDER BY booking_date ASC LIMIT 1)'),
                     $sortOrder
                 );
                 break;
             default:
-                // Default sorting by created_at if invalid sort_by is provided
                 $query->orderBy('created_at', $sortOrder);
                 break;
         }
 
-        $transactions = $query->get();
+        // Add pagination support
+        $perPage = $request->input('per_page', 50); // Default 50 items per page
+        $perPage = min($perPage, 100); // Max 100 items per page
 
+        // Get total count before pagination for statistics
+        $totalCount = $query->count();
+
+        // Only load relationships after filtering and before pagination
+        $query->with([
+            'user:id,first_name,last_name,email,role',
+            'cartItems' => function($q) {
+                $q->where('status', '!=', 'cancelled')
+                  ->whereNull('booking_waitlist_id')
+                  ->select('id', 'cart_transaction_id', 'court_id', 'sport_id', 'booking_date',
+                          'start_time', 'end_time', 'price', 'status', 'booking_for_user_id',
+                          'booking_for_user_name', 'admin_notes', 'notes');
+            },
+            'cartItems.court:id,name',
+            'cartItems.sport:id,name,icon',
+            'cartItems.bookingForUser:id,first_name,last_name,email',
+            'posSales.saleItems.product',
+            'approver:id,first_name,last_name,email',
+            'waitlistEntries' => function($q) {
+                $q->select('id', 'pending_booking_id', 'user_id', 'booking_for_user_id',
+                          'booking_for_user_name', 'position', 'status')
+                  ->orderBy('position', 'asc');
+            },
+            'waitlistEntries.user:id,first_name,last_name,email',
+            'waitlistEntries.bookingForUser:id,first_name,last_name,email'
+        ]);
+
+        // Apply pagination
+        if ($request->has('page')) {
+            $transactions = $query->paginate($perPage);
+
+            return response()->json([
+                'data' => CartTransactionResource::collection($transactions->items()),
+                'pagination' => [
+                    'total' => $transactions->total(),
+                    'per_page' => $transactions->perPage(),
+                    'current_page' => $transactions->currentPage(),
+                    'last_page' => $transactions->lastPage(),
+                    'from' => $transactions->firstItem(),
+                    'to' => $transactions->lastItem()
+                ],
+                'summary' => [
+                    'total_filtered' => $totalCount
+                ]
+            ]);
+        }
+
+        // If no pagination requested, return all (maintain backward compatibility)
+        $transactions = $query->get();
         return CartTransactionResource::collection($transactions);
     }
 
