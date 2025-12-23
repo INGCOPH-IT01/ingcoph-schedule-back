@@ -139,12 +139,14 @@ class CartTransactionController extends Controller
             $query->where(function($q) use ($searchTerm) {
                 // Search in transaction user
                 $q->whereHas('user', function($userQuery) use ($searchTerm) {
-                    $userQuery->where('name', 'like', "%{$searchTerm}%")
-                             ->orWhere('email', 'like', "%{$searchTerm}%");
+                    $userQuery->where('first_name', 'like', "%{$searchTerm}%")
+                            ->orWhere('last_name', 'like', "%{$searchTerm}%")
+                            ->orWhere('email', 'like', "%{$searchTerm}%");
                 })
                 // Search in booking_for_user
                 ->orWhereHas('cartItems.bookingForUser', function($bookingForQuery) use ($searchTerm) {
-                    $bookingForQuery->where('name', 'like', "%{$searchTerm}%")
+                    $bookingForQuery->where('first_name', 'like', "%{$searchTerm}%")
+                                   ->orWhere('last_name', 'like', "%{$searchTerm}%")
                                    ->orWhere('email', 'like', "%{$searchTerm}%");
                 })
                 // Search in booking_for_user_name (walk-in customers)
