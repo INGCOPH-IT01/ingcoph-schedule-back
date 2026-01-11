@@ -115,13 +115,18 @@ class PosSale extends Model
 
     /**
      * Calculate total profit.
+     * Profit = Sum of (unit_price - unit_cost) * quantity for all items, minus item discounts and sale discount, plus tax.
      */
     public function getProfitAttribute()
     {
-        $totalCost = $this->saleItems->sum(function ($item) {
-            return $item->unit_cost * $item->quantity;
+        // Calculate sum of item profits: (unit_price - unit_cost) * quantity - item_discount
+        $itemsProfitBeforeGlobalDiscount = $this->saleItems->sum(function ($item) {
+            return ($item->unit_price - $item->unit_cost) * $item->quantity - $item->discount;
         });
-        return $this->total_amount - $totalCost;
+
+        // Apply global discount to the profit
+        // The global discount reduces the profit since it's a reduction in revenue
+        return $itemsProfitBeforeGlobalDiscount - $this->discount;
     }
 
     /**

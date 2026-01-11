@@ -29,9 +29,37 @@ class PosSaleItem extends Model
 
     // Don't automatically append item_profit - it will be conditionally added for admins only
     // protected $appends = ['item_profit'];
-    
+
     // Hide unit_cost by default (only admins should see this)
     protected $hidden = ['unit_cost'];
+
+    /**
+     * Boot the model and set up event listeners.
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        // Automatically set unit_cost from product cost when creating
+        static::creating(function ($saleItem) {
+            if (is_null($saleItem->unit_cost) && $saleItem->product_id) {
+                $product = Product::find($saleItem->product_id);
+                if ($product) {
+                    $saleItem->unit_cost = $product->cost;
+                }
+            }
+        });
+
+        // Automatically update unit_cost from product cost when updating (if product_id changes)
+        static::updating(function ($saleItem) {
+            if ($saleItem->isDirty('product_id') && $saleItem->product_id) {
+                $product = Product::find($saleItem->product_id);
+                if ($product) {
+                    $saleItem->unit_cost = $product->cost;
+                }
+            }
+        });
+    }
 
     /**
      * Get the sale.
@@ -57,4 +85,3 @@ class PosSaleItem extends Model
         return ($this->unit_price - $this->unit_cost) * $this->quantity - $this->discount;
     }
 }
-
