@@ -410,9 +410,18 @@ class PosSaleController extends Controller
             $sale->append('proof_of_payment_urls');
         });
 
-        // Hide profit data for non-admin users
-        if (!auth()->check() || auth()->user()->role !== 'admin') {
-            $sales->makeHidden('profit');
+        // Only admins can see profit data
+        if (auth()->check() && auth()->user()->role === 'admin') {
+            // Append profit to each sale
+            $sales->each(function ($sale) {
+                $sale->append('profit');
+
+                // Also append item_profit and make unit_cost visible for each sale item
+                $sale->saleItems->each(function ($item) {
+                    $item->append('item_profit');
+                    $item->makeVisible('unit_cost');
+                });
+            });
         }
 
         return response()->json($sales);
