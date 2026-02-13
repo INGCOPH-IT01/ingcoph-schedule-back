@@ -170,9 +170,11 @@ class PosSale extends Model
 
     /**
      * Scope a query to filter by today.
+     * Uses DATE() function to avoid timezone conversion issues
      */
     public function scopeToday($query)
     {
-        return $query->whereDate('sale_date', today());
+        $today = now()->toDateString();
+        return $query->whereRaw('DATE(sale_date) = ?', [$today]);
     }
 }

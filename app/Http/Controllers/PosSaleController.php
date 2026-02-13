@@ -26,10 +26,13 @@ class PosSaleController extends Controller
 
         // Filter by date range
         if ($request->has('date_from') && $request->has('date_to')) {
-            // Parse dates in application timezone
-            $dateFromStart = \Carbon\Carbon::parse($request->date_from, config('app.timezone'))->startOfDay();
-            $dateToEnd = \Carbon\Carbon::parse($request->date_to, config('app.timezone'))->endOfDay();
-            $query->whereBetween('sale_date', [$dateFromStart, $dateToEnd]);
+            // Parse dates in application timezone without converting to UTC
+            // Use date comparison instead of datetime to avoid timezone issues
+            $dateFrom = $request->date_from;
+            $dateTo = $request->date_to;
+            
+            $query->whereRaw('DATE(sale_date) >= ?', [$dateFrom])
+                  ->whereRaw('DATE(sale_date) <= ?', [$dateTo]);
         }
 
         // Filter by user (staff/admin)
@@ -357,14 +360,12 @@ class PosSaleController extends Controller
             ], 403);
         }
 
-        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateFrom = $request->get('date_from', now()->toDateString());
         $dateTo = $request->get('date_to', now()->toDateString());
 
-        // Parse dates in application timezone and ensure dateTo includes the entire day
-        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
-        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
-
-        $query = PosSale::whereBetween('sale_date', [$dateFromStart, $dateToEnd]);
+        // Use date comparison to avoid timezone conversion issues
+        $query = PosSale::whereRaw('DATE(sale_date) >= ?', [$dateFrom])
+                        ->whereRaw('DATE(sale_date) <= ?', [$dateTo]);
 
         $stats = [
             'total_sales' => $query->clone()->completed()->count(),
@@ -392,15 +393,13 @@ class PosSaleController extends Controller
      */
     public function salesReport(Request $request)
     {
-        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateFrom = $request->get('date_from', now()->toDateString());
         $dateTo = $request->get('date_to', now()->toDateString());
 
-        // Parse dates in application timezone and ensure dateTo includes the entire day
-        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
-        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
-
+        // Use date comparison to avoid timezone conversion issues
         $sales = PosSale::with(['user:id,first_name,last_name', 'customer:id,first_name,last_name', 'saleItems.product'])
-            ->whereBetween('sale_date', [$dateFromStart, $dateToEnd])
+            ->whereRaw('DATE(sale_date) >= ?', [$dateFrom])
+            ->whereRaw('DATE(sale_date) <= ?', [$dateTo])
             ->completed()
             ->orderBy('sale_date', 'desc')
             ->get();
@@ -432,17 +431,15 @@ class PosSaleController extends Controller
      */
     public function productSalesSummary(Request $request)
     {
-        $dateFrom = $request->get('date_from', now()->startOfMonth()->toDateString());
+        $dateFrom = $request->get('date_from', now()->toDateString());
         $dateTo = $request->get('date_to', now()->toDateString());
 
-        // Parse dates in application timezone and ensure dateTo includes the entire day
-        $dateFromStart = \Carbon\Carbon::parse($dateFrom, config('app.timezone'))->startOfDay();
-        $dateToEnd = \Carbon\Carbon::parse($dateTo, config('app.timezone'))->endOfDay();
-
+        // Use date comparison to avoid timezone conversion issues
         $query = DB::table('pos_sale_items')
             ->join('pos_sales', 'pos_sale_items.pos_sale_id', '=', 'pos_sales.id')
             ->join('products', 'pos_sale_items.product_id', '=', 'products.id')
-            ->whereBetween('pos_sales.sale_date', [$dateFromStart, $dateToEnd])
+            ->whereRaw('DATE(pos_sales.sale_date) >= ?', [$dateFrom])
+            ->whereRaw('DATE(pos_sales.sale_date) <= ?', [$dateTo])
             ->where('pos_sales.status', 'completed')
             ->select(
                 'products.id',
