@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\CartTransactionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\CompanySettingController;
 use App\Http\Controllers\Api\HolidayController;
+use App\Http\Controllers\Api\PromotionController;
+use App\Http\Controllers\Api\BannerController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PosSaleController;
 use App\Http\Controllers\InventoryController;
@@ -49,6 +51,12 @@ Route::post('/save-court-image/{id}', [CourtController::class, 'saveImage']);
 // Public company settings routes
 Route::get('/company-settings', [CompanySettingController::class, 'index']);
 Route::get('/company-settings/{key}', [CompanySettingController::class, 'show']);
+
+// Public promotion routes (active promotions for home page)
+Route::get('/promotions/active', [PromotionController::class, 'active']);
+
+// Public banner routes (active banners for home page)
+Route::get('/banners', [BannerController::class, 'index']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -191,6 +199,20 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/company-settings', [CompanySettingController::class, 'update']);
         Route::delete('/admin/company-settings/logo', [CompanySettingController::class, 'deleteLogo']);
         Route::delete('/admin/company-settings/payment-qr-code', [CompanySettingController::class, 'deletePaymentQrCode']);
+
+        // Admin promotion routes
+        Route::get('/admin/promotions', [PromotionController::class, 'index']);
+        Route::post('/admin/promotions', [PromotionController::class, 'store']);
+        Route::get('/admin/promotions/{id}', [PromotionController::class, 'show']);
+        Route::post('/admin/promotions/{id}', [PromotionController::class, 'update']); // POST for multipart/form-data
+        Route::delete('/admin/promotions/{id}', [PromotionController::class, 'destroy']);
+
+        // Admin banner routes
+        Route::get('/admin/banners', [BannerController::class, 'all']);
+        Route::post('/admin/banners', [BannerController::class, 'store']);
+        Route::post('/admin/banners/{id}', [BannerController::class, 'update']);
+        Route::delete('/admin/banners/{id}', [BannerController::class, 'destroy']);
+        Route::post('/admin/banners/reorder', [BannerController::class, 'reorder']);
     });
 
     // POS routes (admin, staff, and cashier)
