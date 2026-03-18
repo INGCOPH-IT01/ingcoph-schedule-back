@@ -181,6 +181,11 @@ class CompanySettingController extends Controller
                 $settings['reschedule_window_hours'] = (int)$settings['reschedule_window_hours'];
             }
 
+            // Booking cutoff date (latest date users are allowed to book)
+            if (!isset($settings['booking_cutoff_date'])) {
+                $settings['booking_cutoff_date'] = null;
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $settings
@@ -283,6 +288,8 @@ class CompanySettingController extends Controller
             'terms_enabled' => 'nullable|boolean',
             // Reschedule window
             'reschedule_window_hours' => 'nullable|integer|min:0|max:168',
+            // Booking cutoff date
+            'booking_cutoff_date' => 'nullable|date_format:Y-m-d',
         ]);
 
         if ($validator->fails()) {
@@ -459,6 +466,11 @@ class CompanySettingController extends Controller
                 CompanySetting::set('reschedule_window_hours', (string)$request->reschedule_window_hours);
             }
 
+            // Save booking cutoff date
+            if ($request->has('booking_cutoff_date')) {
+                CompanySetting::set('booking_cutoff_date', $request->booking_cutoff_date ?: null);
+            }
+
             $responseData = [
                 'company_name' => $request->company_name,
                 'theme_primary_color' => CompanySetting::get('theme_primary_color', '#B71C1C'),
@@ -504,6 +516,9 @@ class CompanySettingController extends Controller
 
             // Add reschedule window to response
             $responseData['reschedule_window_hours'] = (int)CompanySetting::get('reschedule_window_hours', '24');
+
+            // Add booking cutoff date to response
+            $responseData['booking_cutoff_date'] = CompanySetting::get('booking_cutoff_date') ?: null;
 
             $logoPath = CompanySetting::get('company_logo');
             if ($logoPath) {

@@ -105,6 +105,21 @@ class BookingController extends Controller
         if ($request->user()->isUser()) {
             $bookingDate = Carbon::parse($request->start_time);
 
+            // Check if the booking date exceeds the cutoff date
+            $cutoffDate = \App\Models\CompanySetting::get('booking_cutoff_date');
+            if ($cutoffDate) {
+                $cutoff = Carbon::parse($cutoffDate)->endOfDay();
+                if ($bookingDate->greaterThan($cutoff)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Bookings are only allowed up to ' . Carbon::parse($cutoffDate)->format('F j, Y'),
+                        'errors' => [
+                            'start_time' => ['Booking date exceeds the allowed booking period']
+                        ]
+                    ], 422);
+                }
+            }
+
             // Check if the date is blocked for regular users
             $blockedDatesJson = \App\Models\CompanySetting::get('blocked_booking_dates');
             if ($blockedDatesJson) {
