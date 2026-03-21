@@ -65,6 +65,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
 
+    // Holidays (read-only, accessible to all authenticated users for booking calendar)
+    Route::get('/holidays', [HolidayController::class, 'index']);
+
     // Sport management (admin and staff)
     Route::middleware('admin.or.staff')->group(function () {
         Route::post('/sports', [SportController::class, 'store']);
