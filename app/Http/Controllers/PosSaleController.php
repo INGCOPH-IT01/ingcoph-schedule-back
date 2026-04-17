@@ -6,8 +6,10 @@ use App\Models\PosSale;
 use App\Models\PosSaleItem;
 use App\Models\Product;
 use App\Models\CartTransaction;
+use App\Models\CompanySetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
 class PosSaleController extends Controller
@@ -112,6 +114,7 @@ class PosSaleController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.discount' => 'nullable|numeric|min:0',
+            'items.*.override_price' => 'nullable|numeric|min:0',
             'discount' => 'nullable|numeric|min:0',
             'tax' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|string',
@@ -144,17 +147,22 @@ class PosSaleController extends Controller
                 }
 
                 $itemDiscount = $item['discount'] ?? 0;
-                $itemSubtotal = ($product->price * $item['quantity']) - $itemDiscount;
+                // Use override_price if provided (requires prior admin authorization from frontend)
+                $unitPrice = isset($item['override_price']) && $item['override_price'] !== null
+                    ? (float) $item['override_price']
+                    : (float) $product->price;
+                $itemSubtotal = ($unitPrice * $item['quantity']) - $itemDiscount;
                 $subtotal += $itemSubtotal;
 
                 $saleItemsData[] = [
                     'product_id' => $product->id,
                     'product' => $product,
                     'quantity' => $item['quantity'],
-                    'unit_price' => $product->price,
+                    'unit_price' => $unitPrice,
                     'unit_cost' => $product->cost,
                     'discount' => $itemDiscount,
                     'subtotal' => $itemSubtotal,
+                    'is_price_overridden' => isset($item['override_price']) && $item['override_price'] !== null,
                 ];
             }
 
@@ -460,5 +468,35 @@ class PosSaleController extends Controller
             ->get();
 
         return response()->json($productSales);
+    }
+
+    /**
+     * Verify the system override password set by admin in Company Settings.
+     * Any authenticated staff/cashier/admin can call this to authorize a price override.
+     */
+    public function verifyOverridePassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'password' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Password is required.'], 422);
+        }
+
+        $storedHash = CompanySetting::get('pos_override_password');
+
+        if (!$storedHash) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No override password has been configured. Please ask your admin to set one in Company Settings.',
+            ], 403);
+        }
+
+        if (!Hash::check($request->password, $storedHash)) {
+            return response()->json(['success' => false, 'message' => 'Incorrect override password.'], 401);
+        }
+
+        return response()->json(['success' => true]);
     }
 }

@@ -243,6 +243,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/pos/sales', [PosSaleController::class, 'store']);
         Route::patch('/pos/sales/{id}/status', [PosSaleController::class, 'updateStatus']);
         Route::delete('/pos/sales/{id}', [PosSaleController::class, 'destroy']);
+        Route::post('/pos/verify-override-password', [PosSaleController::class, 'verifyOverridePassword']);
 
         // POS Statistics and Reports
         Route::get('/pos/statistics', [PosSaleController::class, 'statistics']);
