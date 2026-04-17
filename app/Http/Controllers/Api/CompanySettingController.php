@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CompanySetting;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 
@@ -186,6 +187,11 @@ class CompanySettingController extends Controller
                 $settings['booking_cutoff_date'] = null;
             }
 
+            // POS override password — never expose the hash, only whether it's been set
+            $overrideHash = CompanySetting::get('pos_override_password');
+            $settings['pos_override_password_set'] = !empty($overrideHash);
+            unset($settings['pos_override_password']); // never send hash to frontend
+
             return response()->json([
                 'success' => true,
                 'data' => $settings
@@ -290,6 +296,9 @@ class CompanySettingController extends Controller
             'reschedule_window_hours' => 'nullable|integer|min:0|max:168',
             // Booking cutoff date
             'booking_cutoff_date' => 'nullable|date_format:Y-m-d',
+            // POS override password (plain-text on save, stored hashed)
+            'pos_override_password' => 'nullable|string|min:4|max:64',
+            'pos_override_password_clear' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -471,6 +480,13 @@ class CompanySettingController extends Controller
                 CompanySetting::set('booking_cutoff_date', $request->booking_cutoff_date ?: null);
             }
 
+            // Save POS override password (stored as bcrypt hash)
+            if ($request->boolean('pos_override_password_clear')) {
+                CompanySetting::set('pos_override_password', null);
+            } elseif ($request->filled('pos_override_password')) {
+                CompanySetting::set('pos_override_password', Hash::make($request->pos_override_password));
+            }
+
             $responseData = [
                 'company_name' => $request->company_name,
                 'theme_primary_color' => CompanySetting::get('theme_primary_color', '#B71C1C'),
@@ -519,6 +535,9 @@ class CompanySettingController extends Controller
 
             // Add booking cutoff date to response
             $responseData['booking_cutoff_date'] = CompanySetting::get('booking_cutoff_date') ?: null;
+
+            // Indicate whether override password is now set (never expose hash)
+            $responseData['pos_override_password_set'] = !empty(CompanySetting::get('pos_override_password'));
 
             $logoPath = CompanySetting::get('company_logo');
             if ($logoPath) {
