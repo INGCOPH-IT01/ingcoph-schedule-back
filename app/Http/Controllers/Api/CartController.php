@@ -934,15 +934,22 @@ class CartController extends Controller
         // Check if user is Admin or Staff
         $isAdminOrStaff = in_array($request->user()->role, ['admin', 'staff']);
 
+        // Determine if a proof was provided either as uploaded files or base64 JSON
+        $hasProofFiles = $request->hasFile('proof_of_payment_files');
+        $hasProofBase64 = !empty($request->proof_of_payment);
+        $hasProof = $hasProofFiles || $hasProofBase64;
+
         // Build validation rules - payment is optional for Admin/Staff
         $validationRules = [
             'payment_method' => $isAdminOrStaff ? 'nullable|in:pending,gcash,cash' : 'required|in:pending,gcash',
-            'proof_of_payment' => $isAdminOrStaff ? 'nullable' : 'required_if:payment_method,gcash',
+            'proof_of_payment' => 'nullable', // base64 string(s) — validated via $hasProof below
+            'proof_of_payment_files' => 'nullable|array',
+            'proof_of_payment_files.*' => 'nullable|file|mimes:jpg,jpeg,png,gif,webp,pdf|max:10240',
             'payment_reference_number' => 'nullable|string|max:255',
             'selected_items' => 'nullable|array',
             'selected_items.*' => 'integer|exists:cart_items,id',
-            'skip_payment' => 'nullable|boolean', // New field for Admin/Staff to explicitly skip payment
-            'pos_items' => 'nullable|array',
+            'skip_payment' => 'nullable|boolean',
+            'pos_items' => 'nullable|string', // JSON-encoded when sent as FormData
             'pos_items.*.product_id' => 'required_with:pos_items|integer|exists:products,id',
             'pos_items.*.quantity' => 'required_with:pos_items|integer|min:1',
             'pos_items.*.unit_price' => 'required_with:pos_items|numeric|min:0',
@@ -952,6 +959,14 @@ class CartController extends Controller
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
+
+        // Manually enforce proof requirement for non-admin GCash payments
+        if (!$isAdminOrStaff && $request->payment_method === 'gcash' && !$hasProof) {
+            return response()->json([
+                'message' => 'Proof of payment is required for GCash payments.',
+                'errors' => ['proof_of_payment' => ['The proof of payment field is required when payment method is gcash.']]
+            ], 422);
+        }
 
         if ($validator->fails()) {
             return response()->json([
@@ -1084,11 +1099,34 @@ class CartController extends Controller
             // Calculate total price for the selected items
             $totalPrice = array_sum(array_column($groupedBookings, 'price'));
 
-            // Process proof of payment - decode base64 and save as file(s)
+            // Process proof of payment — supports both multipart file uploads (preferred
+            // from mobile) and legacy base64-encoded JSON strings.
             $proofOfPaymentPath = null;
-            if ($request->proof_of_payment) {
+
+            if ($request->hasFile('proof_of_payment_files')) {
+                // --- Multipart file upload path (mobile-friendly) ---
                 try {
-                    // Handle both single base64 string and array of base64 strings
+                    $savedPaths = [];
+                    foreach ($request->file('proof_of_payment_files') as $index => $uploadedFile) {
+                        if (!$uploadedFile->isValid()) {
+                            continue;
+                        }
+                        $extension = $uploadedFile->getClientOriginalExtension() ?: 'jpg';
+                        $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '_' . $index . '.' . $extension;
+                        Storage::disk('public')->put('proofs/' . $filename, file_get_contents($uploadedFile->getRealPath()));
+                        $savedPaths[] = 'proofs/' . $filename;
+                    }
+                    if (count($savedPaths) > 1) {
+                        $proofOfPaymentPath = json_encode($savedPaths);
+                    } elseif (count($savedPaths) === 1) {
+                        $proofOfPaymentPath = $savedPaths[0];
+                    }
+                } catch (\Exception $e) {
+                    // Continue — validation below will catch a missing proof
+                }
+            } elseif ($request->proof_of_payment) {
+                // --- Legacy base64 JSON path ---
+                try {
                     $proofData = $request->proof_of_payment;
                     $proofArray = is_array($proofData) ? $proofData : [$proofData];
                     $savedPaths = [];
@@ -1097,35 +1135,28 @@ class CartController extends Controller
                         // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
                         if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
                             $base64String = substr($base64String, strpos($base64String, ',') + 1);
-                            $imageType = strtolower($type[1]); // jpg, png, gif, etc.
+                            $imageType = strtolower($type[1]);
                         } else {
                             $imageType = 'jpg';
                         }
 
-                        // Decode base64 to binary image data
                         $imageData = base64_decode($base64String);
-
                         if ($imageData === false) {
                             continue;
                         }
 
-                        // Create filename with transaction ID, timestamp, and index
                         $filename = 'proof_txn_' . $cartTransaction->id . '_' . time() . '_' . $index . '.' . $imageType;
-
-                        // Save to storage/app/public/proofs/
                         Storage::disk('public')->put('proofs/' . $filename, $imageData);
-
                         $savedPaths[] = 'proofs/' . $filename;
                     }
 
-                    // Store as JSON array if multiple files, otherwise as single string for backward compatibility
                     if (count($savedPaths) > 1) {
                         $proofOfPaymentPath = json_encode($savedPaths);
                     } elseif (count($savedPaths) === 1) {
                         $proofOfPaymentPath = $savedPaths[0];
                     }
                 } catch (\Exception $e) {
-                    // Continue without proof file - validation will handle missing proof
+                    // Continue without proof file
                 }
             }
 
