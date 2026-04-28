@@ -1349,12 +1349,13 @@ class CartController extends Controller
             // Process POS items if provided
             $posAmount = 0;
             $bookingAmount = $totalPrice;
-            if ($request->has('pos_items') && count($request->pos_items) > 0) {
+            $posItems = $request->has('pos_items') ? json_decode($request->pos_items, true) : [];
+            if (!empty($posItems)) {
                 // Create POS sale linked to this transaction
                 $posSubtotal = 0;
                 $posSaleItems = [];
 
-                foreach ($request->pos_items as $item) {
+                foreach ($posItems as $item) {
                     $product = \App\Models\Product::findOrFail($item['product_id']);
 
                     // Check stock availability
