@@ -993,14 +993,63 @@ class CartTransactionController extends Controller
                     'paid_at' => now()
                 ]);
 
-                // Bulk update all associated bookings with payment reference number
-                $transaction->bookings()->update([
-                    'proof_of_payment' => $proofOfPaymentJson,
-                    'payment_method' => $request->payment_method,
-                    'payment_reference_number' => $request->payment_reference_number,
-                    'payment_status' => 'paid',
-                    'paid_at' => now()
-                ]);
+                // If no booking records exist yet (staff/admin cart flow), create them from cart items
+                if ($transaction->bookings()->count() === 0) {
+                    $cartItems = $transaction->cartItems()
+                        ->whereNotIn('status', ['cancelled', 'rejected'])
+                        ->whereNull('booking_waitlist_id')
+                        ->get();
+
+                    foreach ($cartItems as $cartItem) {
+                        $bookingDate = \Carbon\Carbon::parse($cartItem->booking_date)->format('Y-m-d');
+                        $startTime = \Carbon\Carbon::parse($cartItem->start_time);
+                        $endTime = \Carbon\Carbon::parse($cartItem->end_time);
+
+                        // Handle midnight crossing
+                        if ($endTime->lte($startTime)) {
+                            $endDate = \Carbon\Carbon::parse($bookingDate)->addDay()->format('Y-m-d');
+                            $endDateTime = $endDate . ' ' . $endTime->format('H:i:s');
+                        } else {
+                            $endDateTime = $bookingDate . ' ' . $endTime->format('H:i:s');
+                        }
+                        $startDateTime = $bookingDate . ' ' . $startTime->format('H:i:s');
+
+                        Booking::create([
+                            'user_id' => $transaction->user_id,
+                            'cart_transaction_id' => $transaction->id,
+                            'court_id' => $cartItem->court_id,
+                            'sport_id' => $cartItem->sport_id,
+                            'start_time' => $startDateTime,
+                            'end_time' => $endDateTime,
+                            'total_price' => $cartItem->price,
+                            'number_of_players' => $cartItem->number_of_players ?? 1,
+                            'status' => 'pending',
+                            'notes' => $cartItem->notes,
+                            'admin_notes' => $cartItem->admin_notes,
+                            'payment_method' => $request->payment_method,
+                            'payment_reference_number' => $request->payment_reference_number,
+                            'payment_status' => 'paid',
+                            'proof_of_payment' => $proofOfPaymentJson,
+                            'paid_at' => now(),
+                            'booking_for_user_id' => $cartItem->booking_for_user_id,
+                            'booking_for_user_name' => $cartItem->booking_for_user_name,
+                        ]);
+                    }
+
+                    Log::info('Created booking records from cart items on payment upload', [
+                        'transaction_id' => $transaction->id,
+                        'cart_items_count' => $cartItems->count(),
+                    ]);
+                } else {
+                    // Booking records already exist — just update payment fields
+                    $transaction->bookings()->update([
+                        'proof_of_payment' => $proofOfPaymentJson,
+                        'payment_method' => $request->payment_method,
+                        'payment_reference_number' => $request->payment_reference_number,
+                        'payment_status' => 'paid',
+                        'paid_at' => now()
+                    ]);
+                }
 
                 // Commit all changes atomically
                 DB::commit();
