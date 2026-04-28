@@ -24,8 +24,16 @@ class CreateBookingsForCartTransactionsSeeder extends Seeder
     {
         $this->command->info('Starting to create bookings for cart transactions with no bookings...');
 
-        // Find cart transactions that have no associated bookings
+        // Find cart transactions that have no associated bookings.
+        // Only process transactions that are genuinely active — skip expired/cancelled
+        // and unpaid transactions that were never completed (abandoned carts).
         $transactionsWithoutBookings = CartTransaction::doesntHave('bookings')
+            ->whereNotIn('status', ['expired', 'cancelled'])
+            ->where(function ($q) {
+                // Must be paid OR approved — never just abandoned pending/unpaid
+                $q->where('payment_status', 'paid')
+                  ->orWhereIn('approval_status', ['approved']);
+            })
             ->with(['cartItems.court', 'cartItems.sport', 'user'])
             ->get();
 
@@ -52,7 +60,7 @@ class CreateBookingsForCartTransactionsSeeder extends Seeder
 
             DB::beginTransaction();
             try {
-                foreach ($transaction->cartItems as $cartItem) {
+                foreach ($transaction->cartItems->whereNotIn('status', ['cancelled', 'rejected', 'expired']) as $cartItem) {
                     // Validate that the cart item has all required data
                     if (!$cartItem->court_id || !$cartItem->booking_date || !$cartItem->start_time || !$cartItem->end_time) {
                         $this->command->warn("  Cart Item ID {$cartItem->id}: Missing required fields, skipping");
