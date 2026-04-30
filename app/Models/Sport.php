@@ -88,6 +88,25 @@ class Sport extends Model
      */
     public function getPriceForDateTime(Carbon $dateTime): float
     {
+        // Check for a holiday pricing override on this date first
+        $holidayOverride = HolidaySportPricing::whereHas('holiday', function ($query) use ($dateTime) {
+            $query->where(function ($q) use ($dateTime) {
+                // Exact date match
+                $q->whereDate('date', $dateTime->format('Y-m-d'));
+            })->orWhere(function ($q) use ($dateTime) {
+                // Recurring holiday same month/day
+                $q->where('is_recurring', true)
+                  ->whereMonth('date', $dateTime->month)
+                  ->whereDay('date', $dateTime->day);
+            });
+        })
+        ->where('sport_id', $this->id)
+        ->first();
+
+        if ($holidayOverride) {
+            return (float) $holidayOverride->price_per_hour;
+        }
+
         // Get all active time-based pricing rules for this sport, ordered by priority (highest first)
         $pricingRules = $this->timeBasedPricing()
             ->where('is_active', true)
