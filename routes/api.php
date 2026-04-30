@@ -181,6 +181,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/admin/holidays/{id}', [HolidayController::class, 'update']);
         Route::delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
         Route::post('/admin/holidays/check-date', [HolidayController::class, 'checkDate']);
+        Route::get('/admin/holidays/{id}/sport-pricing', [HolidayController::class, 'getSportPricing']);
+        Route::post('/admin/holidays/{id}/sport-pricing', [HolidayController::class, 'upsertSportPricing']);
     });
 
     // User list route (admin and staff) - needed for "Booking For" dropdown

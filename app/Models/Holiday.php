@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Carbon\Carbon;
 
 class Holiday extends Model
@@ -23,6 +24,11 @@ class Holiday extends Model
         'is_recurring' => 'boolean',
         'no_business_operations' => 'boolean',
     ];
+
+    public function sportPricing(): HasMany
+    {
+        return $this->hasMany(HolidaySportPricing::class);
+    }
 
     /**
      * Check if a given date is a holiday

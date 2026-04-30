@@ -11,6 +11,7 @@ use App\Models\BookingWaitlist;
 use App\Events\BookingCreated;
 use App\Helpers\BusinessHoursHelper;
 use App\Helpers\WaitlistHelper;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -378,6 +379,15 @@ class CartController extends Controller
                         ->where('status', BookingWaitlist::STATUS_PENDING)
                         ->count() + 1;
 
+                    // Recalculate price server-side for waitlist entry
+                    $waitlistCourt = Court::with('sport')->find($item['court_id']);
+                    $waitlistPrice = $waitlistCourt && $waitlistCourt->sport
+                        ? $waitlistCourt->sport->calculatePriceForRange(
+                            Carbon::parse($waitlistStartTime),
+                            Carbon::parse($waitlistEndTime)
+                          )
+                        : floatval($item['price']);
+
                     // Create waitlist entry FIRST so we have the ID
                     $waitlistEntry = BookingWaitlist::create([
                         'user_id' => $userId,
@@ -389,7 +399,7 @@ class CartController extends Controller
                         'sport_id' => $item['sport_id'],
                         'start_time' => $waitlistStartTime,
                         'end_time' => $waitlistEndTime,
-                        'price' => $item['price'],
+                        'price' => $waitlistPrice,
                         'number_of_players' => $item['number_of_players'] ?? 1,
                         'position' => $nextPosition,
                         'status' => BookingWaitlist::STATUS_PENDING,
@@ -407,7 +417,7 @@ class CartController extends Controller
                         'booking_date' => $bookingDate,
                         'start_time' => $item['start_time'],
                         'end_time' => $item['end_time'],
-                        'price' => $item['price'],
+                        'price' => $waitlistPrice,
                         'number_of_players' => $item['number_of_players'] ?? 1,
                         'notes' => $item['notes'] ?? null,
                         'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
@@ -424,7 +434,7 @@ class CartController extends Controller
                     );
 
                     // Update cart transaction total price
-                    $totalPrice += floatval($item['price']);
+                    $totalPrice += $waitlistPrice;
 
                     // Track waitlisted items for comprehensive response
                     $waitlistedItems[] = [
@@ -465,6 +475,17 @@ class CartController extends Controller
                 }
 
                 // If we reach here, booking is allowed (no conflict detected)
+
+                // Recalculate price server-side to ensure holiday overrides and time-based
+                // pricing are applied correctly, regardless of what the client sent.
+                $court = Court::with('sport')->find($item['court_id']);
+                $serverPrice = $court && $court->sport
+                    ? $court->sport->calculatePriceForRange(
+                        Carbon::parse($startDateTime),
+                        Carbon::parse($endDateTime)
+                      )
+                    : floatval($item['price']);
+
                 $cartItem = CartItem::create([
                     'user_id' => $userId,
                     'cart_transaction_id' => $cartTransaction->id,
@@ -473,7 +494,7 @@ class CartController extends Controller
                     'booking_date' => $bookingDate,
                     'start_time' => $item['start_time'],
                     'end_time' => $item['end_time'],
-                    'price' => $item['price'],
+                    'price' => $serverPrice,
                     'number_of_players' => $item['number_of_players'] ?? 1,
                     'notes' => $item['notes'] ?? null,
                     'booking_for_user_id' => $item['booking_for_user_id'] ?? null,
@@ -481,7 +502,7 @@ class CartController extends Controller
                     'admin_notes' => $item['admin_notes'] ?? null
                 ]);
 
-                $totalPrice += floatval($item['price']);
+                $totalPrice += $serverPrice;
                 $addedItems[] = $cartItem->load(['court', 'sport', 'court.images']);
             }
 
