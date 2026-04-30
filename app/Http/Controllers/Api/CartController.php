@@ -379,10 +379,16 @@ class CartController extends Controller
                         ->where('status', BookingWaitlist::STATUS_PENDING)
                         ->count() + 1;
 
-                    // Recalculate price server-side for waitlist entry
-                    $waitlistCourt = Court::with('sport')->find($item['court_id']);
-                    $waitlistPrice = $waitlistCourt && $waitlistCourt->sport
-                        ? $waitlistCourt->sport->calculatePriceForRange(
+                    // Recalculate price server-side for waitlist entry using the requested sport
+                    $waitlistSport = isset($item['sport_id'])
+                        ? \App\Models\Sport::find($item['sport_id'])
+                        : null;
+                    if (!$waitlistSport) {
+                        $waitlistCourt = Court::with('sport')->find($item['court_id']);
+                        $waitlistSport = $waitlistCourt?->sport;
+                    }
+                    $waitlistPrice = $waitlistSport
+                        ? $waitlistSport->calculatePriceForRange(
                             Carbon::parse($waitlistStartTime),
                             Carbon::parse($waitlistEndTime)
                           )
@@ -476,11 +482,17 @@ class CartController extends Controller
 
                 // If we reach here, booking is allowed (no conflict detected)
 
-                // Recalculate price server-side to ensure holiday overrides and time-based
-                // pricing are applied correctly, regardless of what the client sent.
-                $court = Court::with('sport')->find($item['court_id']);
-                $serverPrice = $court && $court->sport
-                    ? $court->sport->calculatePriceForRange(
+                // Recalculate price server-side using the requested sport (not the court's default sport),
+                // so holiday overrides and time-based pricing are applied for the correct sport.
+                $pricingSport = isset($item['sport_id'])
+                    ? \App\Models\Sport::find($item['sport_id'])
+                    : null;
+                if (!$pricingSport) {
+                    $pricingCourt = Court::with('sport')->find($item['court_id']);
+                    $pricingSport = $pricingCourt?->sport;
+                }
+                $serverPrice = $pricingSport
+                    ? $pricingSport->calculatePriceForRange(
                         Carbon::parse($startDateTime),
                         Carbon::parse($endDateTime)
                       )

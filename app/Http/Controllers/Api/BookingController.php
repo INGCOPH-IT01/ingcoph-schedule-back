@@ -727,6 +727,7 @@ class BookingController extends Controller
         $validator = Validator::make($request->all(), [
             'date' => 'required|date|after_or_equal:today',
             'duration' => 'nullable|integer|min:1|max:12',
+            'sport_id' => 'nullable|integer|exists:sports,id',
         ]);
 
         if ($validator->fails()) {
@@ -745,6 +746,11 @@ class BookingController extends Controller
                 'message' => 'Court not found'
             ], 404);
         }
+
+        // Use the requested sport for pricing if provided, otherwise fall back to the court's own sport
+        $pricingSport = $request->sport_id
+            ? \App\Models\Sport::find($request->sport_id) ?? $court->sport
+            : $court->sport;
 
         $date = Carbon::parse($request->date);
         $duration = (int) ($request->duration ?? 1); // Default to 1 hour if not specified, cast to int
@@ -840,8 +846,8 @@ class BookingController extends Controller
             }
 
             if (!$conflictingBooking && !$conflictingCartItem) {
-                // Regular available slot - use time-based pricing
-                $price = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
+                // Regular available slot - use time-based pricing for the requested sport
+                $price = $pricingSport->calculatePriceForRange($currentTime, $slotEnd);
                 $availableSlots[] = [
                     'start' => $currentTime->format('H:i'),
                     'end' => $slotEnd->format('H:i'),
@@ -861,7 +867,7 @@ class BookingController extends Controller
                     $bookingEnd = Carbon::createFromFormat('Y-m-d H:i:s', $conflictingBooking->end_time);
                     $bookingDuration = $bookingEnd->diffInHours($bookingStart);
                     // Use time-based pricing for this 1-hour slot
-                    $bookingPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
+                    $bookingPrice = $pricingSport->calculatePriceForRange($currentTime, $slotEnd);
 
                     // Check booking status and payment status
                     $bookingStatus = $conflictingBooking->status ?? 'pending';
@@ -944,7 +950,7 @@ class BookingController extends Controller
                     // Handle conflicting cart item that has associated bookings
                     // Note: We only reach here if cartTransaction has bookings
                     $cartTransaction = $conflictingCartItem->cartTransaction;
-                    $cartItemPrice = $court->sport->calculatePriceForRange($currentTime, $slotEnd);
+                    $cartItemPrice = $pricingSport->calculatePriceForRange($currentTime, $slotEnd);
 
                     // Get the associated booking to determine actual status
                     $associatedBooking = $cartTransaction->bookings()
